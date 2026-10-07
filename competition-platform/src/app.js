@@ -5,6 +5,7 @@ const app = document.querySelector("#app");
 const isAdminRoute = new URLSearchParams(location.search).get("portal") === "admin";
 let animateScreen = null;
 let setWorldStage = null;
+let activateSecurityGate = null;
 if (!isAdminRoute) {
   import("./animations.js")
     .then((module) => { animateScreen = module.animateScreen; })
@@ -12,6 +13,7 @@ if (!isAdminRoute) {
   import("./world.js")
     .then((module) => {
       setWorldStage = module.setWorldStage;
+      activateSecurityGate = module.activateSecurityGate;
       setWorldStage(game?.level ? game.level - 1 : 0);
     })
     .catch((error) => console.warn("The cinematic game environment could not load.", error));
@@ -112,17 +114,23 @@ function renderRegistration() {
 
 function publicQuestionMarkup(question) {
   const timer = Number.isInteger(question.seconds_remaining) ? `<div class="timer"><span aria-hidden="true">◷</span><strong id="round-timer">${question.seconds_remaining}s</strong></div><div class="timer-bar"><span id="timer-progress"></span></div>` : "";
-  const artifact = question.level === 5
-    ? `<div class="tool-string" aria-label="Captured signal">${escapeHtml(question.artifact)}</div>`
-    : `<div class="mission-artifact"><div class="artifact-heading"><span class="live-dot"></span>${escapeHtml(question.terminal || "EVIDENCE CONSOLE")}</div><pre>${escapeHtml(question.artifact || "")}</pre></div>`;
+  const artifact = question.level === 1
+    ? `<div class="password-evidence"><div class="artifact-heading"><span class="live-dot"></span>RECOVERED LAB NOTES</div><p>${escapeHtml(question.context)}</p><ul>${question.clues.map((clue) => `<li>${escapeHtml(clue)}</li>`).join("")}</ul></div>`
+    : question.level === 5
+      ? `<div class="tool-string" aria-label="Captured signal">${escapeHtml(question.artifact)}</div>`
+      : `<div class="mission-artifact"><div class="artifact-heading"><span class="live-dot"></span>${escapeHtml(question.terminal || "EVIDENCE CONSOLE")}</div><pre>${escapeHtml(question.artifact || "")}</pre></div>`;
+  const attempts = question.level === 1
+    ? `<div class="attempt-counter">PASSWORD ATTEMPTS REMAINING <strong id="attempt-count">${question.attempts_remaining}</strong> / 2</div>`
+    : "";
   return `<p class="mission-objective">${escapeHtml(question.prompt)}</p>
     ${artifact}
     ${timer}
+    ${attempts}
     <form class="answer-form terminal-input" data-form="answer">
       <label for="mission-answer">${escapeHtml(question.input_label || "TERMINAL INPUT")}</label>
-      <div class="terminal-command"><span aria-hidden="true">&gt;</span><input id="mission-answer" name="answer" class="text-input" maxlength="200" autocomplete="off" placeholder="${escapeHtml(question.placeholder || "Enter your finding")}" required><button class="button" type="submit">EXECUTE</button></div>
+      <div class="terminal-command"><span aria-hidden="true">&gt;</span><input id="mission-answer" name="answer" class="text-input" maxlength="${question.level === 1 ? 4 : 200}" ${question.level === 1 ? 'inputmode="numeric" pattern="[0-9]{4}"' : ""} autocomplete="off" placeholder="${escapeHtml(question.placeholder || "Enter your finding")}" required><button class="button" type="submit">${question.level === 1 ? "UNLOCK" : "EXECUTE"}</button></div>
     </form>
-    <div class="notice" id="game-notice" role="status">Your command will be evaluated by the secure system.</div>`;
+    <div class="notice" id="game-notice" role="status">${question.level === 1 ? "Analyze the recovered notes. The password is not printed in any one clue." : "Your command will be evaluated by the secure system."}</div>`;
 }
 
 function renderQuestion(question, level, questionIndex, totalQuestions) {
@@ -133,7 +141,7 @@ function renderQuestion(question, level, questionIndex, totalQuestions) {
   game.totalQuestions = totalQuestions;
   const levelInfo = LEVELS[level - 1];
   const intros = {
-    1: "Advanced security laboratory · inspect each system trace and enter the containment command.",
+    1: "Advanced security laboratory · investigate the operator records, connect the clues, and breach each password gate.",
     2: "Unstable experimental facility · investigate captured links and submit the destination evidence.",
     3: "Cyber operations command · recover encrypted payloads using the clues in each transmission.",
     4: "Classified investigation room · trace the source logic and reconstruct the hidden incident token.",
@@ -145,14 +153,22 @@ function renderQuestion(question, level, questionIndex, totalQuestions) {
     <aside class="panel side-panel"><div class="side-title">Mission telemetry</div><div class="side-stat"><span>Facility</span><strong>0${level} / 05</strong></div><div class="side-stat"><span>Challenge</span><strong>${questionIndex + 1} / ${totalQuestions}</strong></div><div class="side-progress">${LEVELS.map((_, i) => `<span class="${i < level - 1 ? "done" : ""}"></span>`).join("")}</div><div class="intel-note">Your assigned mission data is secured to this participant session.</div></aside></div>`;
   showView(markup, level - 1);
   installActivityMonitoring();
-  if (level === 5) startQuestionTimer(question.seconds_remaining ?? 30);
+  if (level === 1 || level === 5) startQuestionTimer(question.seconds_remaining ?? (level === 1 ? 60 : 30));
 }
 
 function playMissionReaction(reaction) {
   const panel = app.querySelector(".challenge-panel");
-  if (!panel || !["breach", "deflect"].includes(reaction)) return Promise.resolve();
+  if (!panel || !["breach", "deflect", "access_granted", "access_denied"].includes(reaction)) return Promise.resolve();
   panel.dataset.reaction = reaction;
-  return new Promise((resolve) => setTimeout(resolve, 480));
+  const notice = app.querySelector("#game-notice");
+  if (notice && reaction.startsWith("access_")) notice.textContent = reaction === "access_granted" ? "ACCESS GRANTED" : "ACCESS DENIED";
+  const gateAnimation = reaction === "access_granted" && activateSecurityGate
+    ? activateSecurityGate()
+    : Promise.resolve();
+  return Promise.all([
+    gateAnimation,
+    new Promise((resolve) => setTimeout(resolve, reaction.startsWith("access_") ? 980 : 480))
+  ]);
 }
 
 function renderLevelCompletion(completion) {
@@ -226,6 +242,19 @@ async function submitAnswer(answer) {
       client_time: new Date().toISOString()
     });
     await playMissionReaction(result.reaction);
+    if (result.retry) {
+      const attemptCounter = document.querySelector("#attempt-count");
+      if (attemptCounter) attemptCounter.textContent = String(result.attempts_remaining);
+      if (notice) notice.textContent = `ACCESS DENIED · ${result.hint} · ${result.attempts_remaining} attempt remaining.`;
+      const field = app.querySelector('input[name="answer"]');
+      if (field) {
+        field.value = "";
+        field.focus();
+      }
+      buttons.forEach((button) => { button.disabled = false; });
+      window.setTimeout(() => startQuestionTimer(result.seconds_remaining), 0);
+      return;
+    }
     if (result.completion) renderLevelCompletion(result.completion);
     else if (result.next_challenge) {
       const next = await participantRequest("current");
@@ -628,9 +657,10 @@ async function loadParticipantDetails(id) {
   const target = document.querySelector("#participant-details");
   if (!target) return;
   const assigned = Object.entries(result.assigned_challenges).map(([level, challenges]) =>
-    `<section class="assigned-level"><h4>LEVEL 0${level} · ${escapeHtml(LEVELS[Number(level) - 1].title)}</h4>${challenges.map((challenge) => `<details class="assigned-challenge"><summary>${String(challenge.ordinal).padStart(2, "0")} · ${escapeHtml(challenge.terminal)}</summary><p>${escapeHtml(challenge.prompt)}</p><pre>${escapeHtml(challenge.artifact)}</pre></details>`).join("")}</section>`
+    `<section class="assigned-level"><h4>LEVEL 0${level} · ${escapeHtml(LEVELS[Number(level) - 1].title)}</h4>${challenges.map((challenge) => `<details class="assigned-challenge"><summary>${String(challenge.ordinal).padStart(2, "0")} · ${escapeHtml(challenge.terminal)}</summary><p>${escapeHtml(challenge.prompt)}</p>${challenge.context ? `<p>${escapeHtml(challenge.context)}</p>` : ""}${challenge.clues?.length ? `<ul>${challenge.clues.map((clue) => `<li>${escapeHtml(clue)}</li>`).join("")}</ul>` : ""}<pre>${escapeHtml(challenge.artifact)}</pre></details>`).join("")}</section>`
   ).join("");
-  const markup = `<h3>Assigned mission challenges</h3><div class="assigned-challenge-list">${assigned}</div><h3>Recorded answers and evaluation</h3><div class="table-scroll"><table><thead><tr><th>Level</th><th>Challenge</th><th>Prompt</th><th>Answer</th><th>Evaluation</th><th>Points</th><th>Submitted</th></tr></thead><tbody>${result.answers.map((answer) => `<tr><td>${answer.level}</td><td>${answer.question_ordinal}</td><td>${escapeHtml(answer.question)}</td><td>${escapeHtml(answer.submitted_answer || "Unanswered")}</td><td>${answer.is_correct ? "Correct" : "Incorrect"}</td><td>${answer.points_awarded}</td><td>${escapeHtml(new Date(answer.answered_at).toLocaleString())}</td></tr>`).join("")}</tbody></table></div><h3>Monitoring events</h3><ul>${result.events.map((event) => `<li>${escapeHtml(event.event_type)} · ${escapeHtml(new Date(event.occurred_at).toLocaleString())}</li>`).join("") || "<li>No activity events.</li>"}</ul>`;
+  const attemptRows = result.attempts.map((attempt) => `<tr><td>${escapeHtml(attempt.question_id)}</td><td>${attempt.attempt_number}</td><td>${escapeHtml(attempt.submitted_answer || "No response")}</td><td>${attempt.is_correct ? "Correct" : "Incorrect"}</td><td>${escapeHtml(new Date(attempt.attempted_at).toLocaleString())}</td></tr>`).join("");
+  const markup = `<h3>Assigned mission challenges</h3><div class="assigned-challenge-list">${assigned}</div><h3>Recorded answers and evaluation</h3><div class="table-scroll"><table><thead><tr><th>Level</th><th>Challenge</th><th>Prompt</th><th>Answer</th><th>Evaluation</th><th>Points</th><th>Attempts</th><th>Submitted</th></tr></thead><tbody>${result.answers.map((answer) => `<tr><td>${answer.level}</td><td>${answer.question_ordinal}</td><td>${escapeHtml(answer.question)}</td><td>${escapeHtml(answer.submitted_answer || "Unanswered")}</td><td>${answer.is_correct ? "Correct" : "Incorrect"}</td><td>${answer.points_awarded}</td><td>${answer.attempts_used}</td><td>${escapeHtml(new Date(answer.answered_at).toLocaleString())}</td></tr>`).join("")}</tbody></table></div><h3>Answer attempts</h3><div class="table-scroll"><table><thead><tr><th>Challenge ID</th><th>Attempt</th><th>Submitted</th><th>Evaluation</th><th>Time</th></tr></thead><tbody>${attemptRows || `<tr><td colspan="5">No answers attempted.</td></tr>`}</tbody></table></div><h3>Monitoring events</h3><ul>${result.events.map((event) => `<li>${escapeHtml(event.event_type)} · ${escapeHtml(new Date(event.occurred_at).toLocaleString())}</li>`).join("") || "<li>No activity events.</li>"}</ul>`;
   participantDetailCache.set(id, markup);
   target.innerHTML = markup;
 }

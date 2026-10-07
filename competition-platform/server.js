@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { assignChallenges, getChallenge, LEVEL_NAMES, LEVEL_QUESTION_COUNTS, QUALIFYING_SCORES } from "./server/questions.js";
+import { assignChallenges, getChallenge, LEVEL_NAMES, LEVEL_ONE_ATTEMPTS, LEVEL_ONE_QUESTION_MS, LEVEL_QUESTION_COUNTS, QUALIFYING_SCORES } from "./server/questions.js";
 
 const PARTICIPANT_COOKIE = "cyber_participant";
 const ADMIN_COOKIE = "cyber_admin";
@@ -55,6 +55,7 @@ function createDatabase(databasePath) {
       year TEXT NOT NULL,
       department TEXT NOT NULL,
       question_index INTEGER NOT NULL DEFAULT 0,
+      question_attempt_count INTEGER NOT NULL DEFAULT 0,
       current_level INTEGER NOT NULL DEFAULT 1,
       awaiting_level INTEGER,
       challenge_assignments TEXT NOT NULL DEFAULT '{}',
@@ -96,10 +97,22 @@ function createDatabase(databasePath) {
       submitted_answer TEXT,
       is_correct INTEGER NOT NULL,
       points_awarded INTEGER NOT NULL,
+      attempts_used INTEGER NOT NULL DEFAULT 1,
       answered_at INTEGER NOT NULL,
       UNIQUE (participant_id, question_id)
     );
     CREATE INDEX IF NOT EXISTS answers_participant_idx ON answers (participant_id, answered_at);
+    CREATE TABLE IF NOT EXISTS answer_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+      question_id TEXT NOT NULL,
+      attempt_number INTEGER NOT NULL,
+      submitted_answer TEXT,
+      is_correct INTEGER NOT NULL,
+      attempted_at INTEGER NOT NULL,
+      UNIQUE (participant_id, question_id, attempt_number)
+    );
+    CREATE INDEX IF NOT EXISTS answer_attempts_participant_idx ON answer_attempts (participant_id, attempted_at);
     CREATE TABLE IF NOT EXISTS events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
@@ -115,6 +128,13 @@ function createDatabase(databasePath) {
   }
   if (!participantColumns.includes("challenge_assignments")) {
     db.exec("ALTER TABLE participants ADD COLUMN challenge_assignments TEXT NOT NULL DEFAULT '{}'");
+  }
+  if (!participantColumns.includes("question_attempt_count")) {
+    db.exec("ALTER TABLE participants ADD COLUMN question_attempt_count INTEGER NOT NULL DEFAULT 0");
+  }
+  const answerColumns = db.prepare("PRAGMA table_info(answers)").all().map((column) => column.name);
+  if (!answerColumns.includes("attempts_used")) {
+    db.exec("ALTER TABLE answers ADD COLUMN attempts_used INTEGER NOT NULL DEFAULT 1");
   }
   backfillChallengeAssignments(db);
   return db;
@@ -148,15 +168,9 @@ function backfillChallengeAssignments(db) {
       ? [ids]
       : [];
   }));
-  const answerCounts = db.prepare(`
-    SELECT level, COUNT(*) AS count
-    FROM answers
-    WHERE participant_id = ?
-    GROUP BY level
-  `);
   const update = db.prepare(`
     UPDATE participants
-    SET challenge_assignments = ?, question_index = ?, awaiting_level = ?, status = ?,
+    SET challenge_assignments = ?, question_index = ?, question_attempt_count = ?, awaiting_level = ?, status = ?, level1_score = ?,
       level1_qualified = ?, level2_qualified = ?, level3_qualified = ?, level4_qualified = ?,
       question_started_at = ?, level5_completed_at = ?, updated_at = ?, revision = ?
     WHERE id = ?
@@ -169,6 +183,10 @@ function backfillChallengeAssignments(db) {
       ids.length === LEVEL_QUESTION_COUNTS[level - 1] &&
       ids.every((id) => getChallenge(id)?.level === level) &&
       new Set(ids).size === ids.length;
+    const currentAssignmentWasValid = validAssignment(
+      participant.current_level,
+      assignments[String(participant.current_level)]
+    );
     let changed = false;
     for (let level = 1; level <= 5; level += 1) {
       if (!validAssignment(level, assignments[String(level)])) {
@@ -180,13 +198,25 @@ function backfillChallengeAssignments(db) {
     if (!changed) continue;
 
     let questionIndex = participant.question_index;
+    let questionAttemptCount = currentAssignmentWasValid ? participant.question_attempt_count : 0;
     let awaitingLevel = participant.awaiting_level;
     let status = participant.status;
     let qualified = [1, 2, 3, 4].map((level) => Number(participant[`level${level}_qualified`]));
+    let levelOneScore = participant.level1_score;
+    if (!currentAssignmentWasValid && status === "active" && participant.current_level === 1 && awaitingLevel === null) {
+      levelOneScore = 0;
+      qualified[0] = 0;
+    }
     let questionStartedAt = participant.question_started_at;
+    if (!currentAssignmentWasValid) questionStartedAt = null;
     let level5CompletedAt = participant.level5_completed_at;
     if (status === "active" && awaitingLevel === null) {
-      const answeredCount = answerCounts.all(participant.id).find((row) => row.level === participant.current_level)?.count || 0;
+      const currentIds = assignments[String(participant.current_level)];
+      const placeholders = currentIds.map(() => "?").join(", ");
+      const answeredCount = db.prepare(`
+        SELECT COUNT(*) AS count FROM answers
+        WHERE participant_id = ? AND question_id IN (${placeholders})
+      `).get(participant.id, ...currentIds).count;
       const levelCount = LEVEL_QUESTION_COUNTS[participant.current_level - 1];
       if (answeredCount >= levelCount) {
         questionIndex = levelCount;
@@ -203,7 +233,7 @@ function backfillChallengeAssignments(db) {
         }
       } else {
         questionIndex = answeredCount;
-        if (participant.current_level === 5) questionStartedAt = null;
+        if (!currentAssignmentWasValid) questionStartedAt = null;
       }
     }
     const now = Date.now();
@@ -211,8 +241,10 @@ function backfillChallengeAssignments(db) {
     update.run(
       JSON.stringify(assignments),
       questionIndex,
+      questionAttemptCount,
       awaitingLevel,
       status,
+      levelOneScore,
       ...qualified,
       questionStartedAt,
       level5CompletedAt,
@@ -412,16 +444,16 @@ export function createCompetitionServer({
     const question = getChallenge(challengeId);
     if (!question) throw new Error(`Active challenge assignment is missing for participant ${participant.id}.`);
 
-    if (question.level === 5 && participant.question_started_at === null) {
+    if ([1, 5].includes(question.level) && participant.question_started_at === null) {
       const now = Date.now();
       const revision = nextRevision();
       db.prepare(`
         UPDATE participants
         SET question_started_at = ?,
-            level5_started_at = CASE WHEN ? = 1 AND level5_started_at IS NULL THEN ? ELSE level5_started_at END,
+            level5_started_at = CASE WHEN ? = 5 AND ? = 1 AND level5_started_at IS NULL THEN ? ELSE level5_started_at END,
             updated_at = ?, revision = ?
         WHERE id = ? AND question_started_at IS NULL
-      `).run(now, participant.question_index + 1, now, now, revision, participant.id);
+      `).run(now, question.level, participant.question_index + 1, now, now, revision, participant.id);
       participant = getParticipant.get(participant.id);
       broadcastAdminUpdates();
     }
@@ -433,10 +465,16 @@ export function createCompetitionServer({
       prompt: question.prompt,
       terminal: question.terminal,
       artifact: question.artifact,
+      ...(question.level === 1 ? { context: question.context, clues: question.clues } : {}),
       input_label: question.input_label,
       placeholder: question.placeholder,
       level_name: LEVEL_NAMES[question.level - 1]
     };
+    if (question.level === 1) {
+      const remaining = Math.max(0, LEVEL_ONE_QUESTION_MS - (Date.now() - participant.question_started_at));
+      responseQuestion.seconds_remaining = Math.ceil(remaining / 1000);
+      responseQuestion.attempts_remaining = LEVEL_ONE_ATTEMPTS - participant.question_attempt_count;
+    }
     if (question.level === 5) {
       const remaining = Math.max(0, LEVEL_FIVE_QUESTION_MS - (Date.now() - participant.question_started_at));
       responseQuestion.seconds_remaining = Math.ceil(remaining / 1000);
@@ -588,7 +626,8 @@ export function createCompetitionServer({
       const revision = nextRevision();
       db.prepare(`
         UPDATE participants
-        SET current_level = ?, question_index = 0, awaiting_level = NULL, challenge_assignments = ?, updated_at = ?, revision = ?
+        SET current_level = ?, question_index = 0, question_attempt_count = 0, question_started_at = NULL,
+          awaiting_level = NULL, challenge_assignments = ?, updated_at = ?, revision = ?
         WHERE id = ? AND status = 'active' AND awaiting_level = ?
       `).run(nextLevel, JSON.stringify(challengeAssignments), Date.now(), revision, participant.id, nextLevel);
       broadcastAdminUpdates();
@@ -609,13 +648,45 @@ export function createCompetitionServer({
       }
 
       const now = Date.now();
-      const timedOut = question.level === 5 &&
-        (participant.question_started_at === null || now >= participant.question_started_at + LEVEL_FIVE_QUESTION_MS);
+      const questionDuration = question.level === 1 ? LEVEL_ONE_QUESTION_MS : LEVEL_FIVE_QUESTION_MS;
+      const timedOut = [1, 5].includes(question.level) &&
+        (participant.question_started_at === null || now >= participant.question_started_at + questionDuration);
       if (!timedOut && (typeof payload.answer !== "string" || !payload.answer.trim())) {
         throw new HttpError(400, "A response is required.");
       }
+      if (question.level === 1 && !timedOut && !/^\d{4}$/.test(payload.answer.trim())) {
+        throw new HttpError(400, "Enter a four-digit password.");
+      }
       const submitted = timedOut ? null : String(payload.answer).trim().slice(0, 200);
       const correct = !timedOut && normalizeAnswer(submitted) === normalizeAnswer(question.expected_answer);
+      const attemptNumber = timedOut ? participant.question_attempt_count : participant.question_attempt_count + 1;
+      if (question.level === 1 && !correct && !timedOut && attemptNumber < LEVEL_ONE_ATTEMPTS) {
+        const revision = nextRevision();
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          db.prepare(`
+            INSERT INTO answer_attempts (participant_id, question_id, attempt_number, submitted_answer, is_correct, attempted_at)
+            VALUES (?, ?, ?, ?, 0, ?)
+          `).run(participant.id, question.id, attemptNumber, submitted, now);
+          db.prepare(`
+            UPDATE participants
+            SET question_attempt_count = ?, updated_at = ?, revision = ?
+            WHERE id = ?
+          `).run(attemptNumber, now, revision, participant.id);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+        broadcastAdminUpdates();
+        return sendJson(response, 200, {
+          retry: true,
+          attempts_remaining: LEVEL_ONE_ATTEMPTS - attemptNumber,
+          hint: question.hint,
+          seconds_remaining: Math.max(0, Math.ceil((participant.question_started_at + LEVEL_ONE_QUESTION_MS - now) / 1000)),
+          reaction: "access_denied"
+        });
+      }
       const awarded = correct ? question.points : 0;
       const levelScoreKey = `level${question.level}_score`;
       const newScore = Math.min(100, participant[levelScoreKey] + awarded);
@@ -625,18 +696,29 @@ export function createCompetitionServer({
       const eliminated = levelComplete && question.level < 5 && !qualified;
       const completed = question.level === 5 && levelComplete;
       const nextIndex = participant.question_index + 1;
+      const attemptsUsed = question.level === 1 ? attemptNumber : Number(!timedOut);
+      const reaction = question.level === 1
+        ? correct ? "access_granted" : "access_denied"
+        : correct ? "breach" : "deflect";
       const revision = nextRevision();
 
       db.exec("BEGIN IMMEDIATE");
       try {
+        if (!timedOut) {
+          db.prepare(`
+            INSERT INTO answer_attempts (participant_id, question_id, attempt_number, submitted_answer, is_correct, attempted_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(participant.id, question.id, attemptsUsed, submitted, Number(correct), now);
+        }
         db.prepare(`
-          INSERT INTO answers (participant_id, question_id, level, question_ordinal, submitted_answer, is_correct, points_awarded, answered_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(participant.id, question.id, question.level, ordinal, submitted, Number(correct), awarded, now);
+          INSERT INTO answers (participant_id, question_id, level, question_ordinal, submitted_answer, is_correct, points_awarded, attempts_used, answered_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(participant.id, question.id, question.level, ordinal, submitted, Number(correct), awarded, attemptsUsed, now);
         if (question.level < 5 && levelComplete) {
           db.prepare(`
             UPDATE participants
-              SET ${levelScoreKey} = ?, level${question.level}_qualified = ?, question_index = ?, awaiting_level = ?,
+              SET ${levelScoreKey} = ?, level${question.level}_qualified = ?, question_index = ?,
+                question_attempt_count = 0, question_started_at = NULL, awaiting_level = ?,
                 status = ?, updated_at = ?, revision = ?
             WHERE id = ?
             `).run(
@@ -652,7 +734,7 @@ export function createCompetitionServer({
         } else if (question.level === 5) {
           db.prepare(`
             UPDATE participants
-            SET level5_score = ?, question_index = ?, question_started_at = ?,
+            SET level5_score = ?, question_index = ?, question_attempt_count = 0, question_started_at = ?,
                 level5_completed_at = ?, status = ?, updated_at = ?, revision = ?
             WHERE id = ?
           `).run(
@@ -668,7 +750,8 @@ export function createCompetitionServer({
         } else {
           db.prepare(`
             UPDATE participants
-            SET ${levelScoreKey} = ?, question_index = ?, updated_at = ?, revision = ?
+            SET ${levelScoreKey} = ?, question_index = ?, question_attempt_count = 0, question_started_at = NULL,
+              updated_at = ?, revision = ?
             WHERE id = ?
           `).run(newScore, nextIndex, now, revision, participant.id);
         }
@@ -686,19 +769,19 @@ export function createCompetitionServer({
           level_complete: true,
           session_ended: eliminated || completed,
           completion: levelCompletion(updatedParticipant, question.level, qualified),
-          reaction: correct ? "breach" : "deflect"
+          reaction
         });
       }
-      if (question.level === 5) {
+      if (question.level === 1 || question.level === 5) {
         return sendJson(response, 200, {
           accepted: true,
           next_challenge: true,
-          reaction: correct ? "breach" : "deflect"
+          reaction
         });
       }
       return sendJson(response, 200, {
         ...publicQuestion(getParticipant.get(participant.id)),
-        reaction: correct ? "breach" : "deflect"
+        reaction
       });
     }
 
@@ -797,12 +880,14 @@ export function createCompetitionServer({
             terminal: challenge.terminal,
             prompt: challenge.prompt,
             artifact: challenge.artifact,
+            context: challenge.context || null,
+            clues: challenge.clues || [],
             points: challenge.points
           };
         })
       ]));
       const answers = db.prepare(`
-        SELECT question_id, level, question_ordinal, submitted_answer, is_correct, points_awarded, answered_at
+        SELECT question_id, level, question_ordinal, submitted_answer, is_correct, points_awarded, attempts_used, answered_at
         FROM answers WHERE participant_id = ? ORDER BY answered_at
       `).all(participantId).map((answer) => ({
         ...answer,
@@ -810,11 +895,19 @@ export function createCompetitionServer({
         question: getChallenge(answer.question_id)?.prompt || "Archived challenge",
         answered_at: new Date(answer.answered_at).toISOString()
       }));
+      const attempts = db.prepare(`
+        SELECT question_id, attempt_number, submitted_answer, is_correct, attempted_at
+        FROM answer_attempts WHERE participant_id = ? ORDER BY attempted_at, id
+      `).all(participantId).map((attempt) => ({
+        ...attempt,
+        is_correct: Boolean(attempt.is_correct),
+        attempted_at: new Date(attempt.attempted_at).toISOString()
+      }));
       const events = db.prepare(`
         SELECT event_type, occurred_at FROM events
         WHERE participant_id = ? ORDER BY id DESC LIMIT 100
       `).all(participantId).map((event) => ({ ...event, occurred_at: new Date(event.occurred_at).toISOString() }));
-      return sendJson(response, 200, { assigned_challenges: assignedChallenges, answers, events });
+      return sendJson(response, 200, { assigned_challenges: assignedChallenges, answers, attempts, events });
     }
 
     throw new HttpError(404, "API route not found.");

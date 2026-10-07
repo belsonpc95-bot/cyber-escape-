@@ -1,26 +1,76 @@
 import { randomInt } from "node:crypto";
 
 const levelOneScenarios = [
-  ["credential-vault", "A shared credential appears in three unrelated service logs. Enter the immediate containment operation.", "Credential reuse confirmed · 3 service realms · no active deployment window.", "REVOKE"],
-  ["recovery-station", "A recovery code was pasted into a public incident channel. Enter the action that protects the account now.", "Recovery factor exposure detected · account session still active.", "ROTATE"],
-  ["identity-console", "A remote sign-in passed a password check from an unknown device, but no second factor was used. Name the control to require.", "Authentication trace: password PASS · second factor NONE · device NEW.", "MFA"],
-  ["key-management", "The same API token is configured in staging and production. Enter the isolation action.", "Token fingerprint matches both environments · production scope includes billing.", "SEGREGATE"],
-  ["access-control", "A former contractor's account still has administrator rights. Enter the first access-control operation.", "Directory state: contract ENDED · role ADMIN · session ACTIVE.", "DISABLE"],
-  ["device-integrity", "A workstation reports that its disk is unencrypted. Enter the data-at-rest safeguard to apply.", "Endpoint posture: disk encryption OFF · portable device · customer records cached.", "ENCRYPT"],
-  ["session-gateway", "A public terminal was left signed in to a privileged console. Enter the session operation.", "Console lock state: OPEN · operator absent · elevated role.", "TERMINATE"],
-  ["patch-control", "A known critical patch is available for an internet-facing host. Enter the defensive change to schedule.", "Exposure window: public · vulnerability severity: critical · patch verified.", "PATCH"],
-  ["backup-vault", "Backups are writable from the same account as production. Enter the property the backup copy must gain.", "Ransomware simulation: production WRITE · backup WRITE · shared identity.", "IMMUTABILITY"],
-  ["audit-terminal", "A login audit trail can be edited by the account it records. Enter the storage property required.", "Evidence integrity check failed · writer and auditor are the same principal.", "TAMPER-EVIDENT"],
-  ["network-segment", "A visitor network can route directly to a research controller. Enter the network boundary control.", "Route probe: guest VLAN → control VLAN · no policy checkpoint.", "SEGMENTATION"],
-  ["certificate-console", "A service certificate is expired and clients are accepting a fallback. Enter the trust operation.", "TLS handshake: expired certificate · fallback accepted · identity unverified.", "REISSUE"],
-  ["email-defense", "An attachment is quarantined, but its sender domain is a lookalike. Enter the sender-validation control.", "Display name matches vendor · envelope domain differs · SPF alignment fails.", "VERIFY-DOMAIN"],
-  ["least-privilege", "A reporting account can modify payroll records. Enter the privilege change.", "Observed need: READ reports · granted role: READ, WRITE, DELETE payroll.", "REDUCE"],
-  ["secret-store", "A database password is embedded in a source repository. Enter the first containment action.", "Repository exposure: credential committed · repository visibility: internal.", "ROTATE-SECRET"],
-  ["endpoint-response", "An endpoint is encrypting files unexpectedly. Enter the immediate containment action.", "EDR alert: rapid file rewrites · host currently connected to trusted LAN.", "ISOLATE"],
-  ["wireless-controller", "A wireless access point still uses its factory administrator credential. Enter the required change.", "Device state: factory account enabled · management interface reachable.", "CHANGE-CREDENTIAL"],
-  ["audit-review", "A privileged action has no corresponding operator record. Enter the evidence source to preserve.", "Event gap: privileged command present · central log absent · host log present.", "PRESERVE-LOGS"],
-  ["key-escrow", "One employee is the only person able to recover an encryption key. Enter the resilience design.", "Key custody: one holder · no sealed recovery copy · service criticality high.", "DUAL-CONTROL"],
-  ["security-baseline", "An unknown executable is requesting administrator approval. Enter the safe response.", "Publisher: unsigned · hash: unseen · request: elevate now.", "DENY"]
+  {
+    id: "ARM-PW-01",
+    terminal: "NOVA'S ACCESS TERMINAL",
+    prompt: "NOVA is locked out of the astronomy lab. Cross-check the profile notes and enter the four-digit access code.",
+    context: "The lab technician recovered a partial profile from the room's visitor ledger.",
+    clues: [
+      "Username: NOVA17",
+      "Fictional birth year: 2006",
+      "Trusted number: 7",
+      "Security note: \"The year is only the beginning. Move forward by the number you trust.\""
+    ],
+    hint: "Use the trusted number as a small step forward from the recorded year.",
+    expected_answer: "2013"
+  },
+  {
+    id: "ARM-PW-02",
+    terminal: "ARCHIVE ROOM LOCK",
+    prompt: "A records cabinet rejected its usual code after being moved. Reconcile the archive label with its new room assignment.",
+    context: "The facilities team moved the cabinet during a routine lab reorganization.",
+    clues: [
+      "Archive label: 5934",
+      "Current room: 27",
+      "Move log: \"For this cabinet, its code drops by exactly the new room number.\"",
+      "Operator note: \"The archive label is the starting value.\""
+    ],
+    hint: "Start with the archive label and apply the room value in the direction implied by the move log.",
+    expected_answer: "5907"
+  },
+  {
+    id: "ARM-PW-03",
+    terminal: "ECHO'S BADGE READER",
+    prompt: "ECHO's badge reader is waiting for a four-digit recovery code. Combine the badge record and the operator's number pattern.",
+    context: "The recovery key was assembled from a badge fragment and a repeated personal setting.",
+    clues: [
+      "Username: ECHO-36",
+      "Favorite number: 8",
+      "Pet name: KODA",
+      "Security note: \"The badge tail is reduced by the favorite number; the ending repeats that number.\""
+    ],
+    hint: "Keep the badge's two-digit tail as the beginning, adjust it using the favorite number, then use the same number twice at the end.",
+    expected_answer: "2888"
+  },
+  {
+    id: "ARM-PW-04",
+    terminal: "ORBITAL CONTROL CONSOLE",
+    prompt: "Restore the operator code from two records. The console expects the values in the order written in the security note.",
+    context: "A maintenance reset left one date fragment and one badge fragment in separate logs.",
+    clues: [
+      "Fictional birthday: 2007-09-24",
+      "Badge serial: LAB-6",
+      "Security note: \"Reverse the birthday's day; then double the badge's final digit. Join the two results.\""
+    ],
+    hint: "The birthday contributes a reversed day, not its year or month; the badge contributes a doubled final digit.",
+    expected_answer: "4212"
+  },
+  {
+    id: "ARM-PW-05",
+    terminal: "FOUR-POD ACCESS GATE",
+    prompt: "The gate code was split across four technician profiles. Put the records in the right order before entering the recovered code.",
+    context: "An overnight audit recovered four partial badge records from the lab roster.",
+    clues: [
+      "MIRA-6 is assigned to Room 09.",
+      "KAI-1 is assigned to Room 03.",
+      "ZED-8 is assigned to Room 12.",
+      "NOA-3 is assigned to Room 06.",
+      "Security note: \"Read the badge digit from the lowest room number to the highest.\""
+    ],
+    hint: "Sort the four records by room number first; take one badge digit from each in that order.",
+    expected_answer: "1368"
+  }
 ];
 
 const levelTwoScenarios = [
@@ -71,16 +121,19 @@ const caesarDecode = (text, key) => [...text].map((letter) =>
   String.fromCharCode((letter.charCodeAt(0) - 65 - key + 26) % 26 + 65)
 ).join("");
 
-const levelOnePool = levelOneScenarios.map(([terminal, prompt, artifact, expected_answer], index) => ({
-  id: `ARM-${String(index + 1).padStart(2, "0")}`,
+const levelOnePool = levelOneScenarios.map(({ id, terminal, prompt, context, clues, hint, expected_answer }) => ({
+  id,
   level: 1,
   terminal,
   prompt,
-  artifact,
-  input_label: "CONTAINMENT OPERATION",
-  placeholder: "Enter the operation",
+  context,
+  clues,
+  hint,
+  artifact: `${context}\n\n${clues.join("\n")}`,
+  input_label: "FOUR-DIGIT PASSWORD",
+  placeholder: "Enter 4 digits",
   expected_answer,
-  points: 10
+  points: 20
 }));
 
 const levelTwoPool = levelTwoScenarios.map(([url, prompt, expected_answer], index) => ({
@@ -201,9 +254,11 @@ export const CHALLENGE_POOLS = [
   levelFivePool
 ];
 
-export const LEVEL_QUESTION_COUNTS = [10, 10, 5, 1, 5];
+export const LEVEL_QUESTION_COUNTS = [5, 10, 5, 1, 5];
 export const LEVEL_NAMES = ["ARMOR PROTOCOL", "GAMMA BREACH", "THE INITIATIVE", "THE FIRST CODE", "FINAL DIRECTIVE"];
 export const QUALIFYING_SCORES = [50, 60, 70, 70];
+export const LEVEL_ONE_ATTEMPTS = 2;
+export const LEVEL_ONE_QUESTION_MS = 60 * 1000;
 const challengesById = new Map(CHALLENGE_POOLS.flat().map((challenge) => [challenge.id, challenge]));
 
 export function getChallenge(id) {
@@ -214,7 +269,7 @@ export function assignChallenges(level, excludedSets = []) {
   const pool = CHALLENGE_POOLS[level - 1];
   const count = LEVEL_QUESTION_COUNTS[level - 1];
   if (!pool || pool.length < count) throw new Error(`Level ${level} does not have enough unique challenges.`);
-  const excluded = new Set(excludedSets.map((ids) => [...ids].sort().join("|")));
+  const excluded = count < pool.length ? new Set(excludedSets.map((ids) => [...ids].sort().join("|"))) : new Set();
   let assignment;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const shuffled = [...pool];

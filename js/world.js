@@ -140,6 +140,7 @@ let pointerY = 0;
 let frame = 0;
 let disposed = false;
 let activeStage = -1;
+const stageHues = [0x56d8e4, 0x4fa9d9, 0x7c86ff, 0x64d9b2, 0xf0c674];
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 function resize() {
@@ -191,7 +192,7 @@ frame = window.requestAnimationFrame(render);
 
 export function setWorldStage(level) {
   const stage = Math.max(0, Math.min(4, Math.trunc(level)));
-  const hue = [0x56d8e4, 0x4fa9d9, 0x7c86ff, 0x64d9b2, 0xf0c674][stage];
+  const hue = stageHues[stage];
   coreMaterial.emissive.setHex(hue);
   keyLight.color.setHex(hue);
   gateMaterial.emissive.setHex(hue);
@@ -224,4 +225,32 @@ export function setWorldStage(level) {
     duration: 0.82,
     ease: "elastic.out(1, 0.62)"
   });
+}
+
+export function activateSecurityGate() {
+  if (reducedMotion) return Promise.resolve();
+  const originalCameraZ = camera.position.z;
+  gateMaterial.emissive.set("#48ff9b");
+  gateFrameMaterial.color.set("#48ff9b");
+  const timeline = gsap.timeline();
+  timeline
+    .to(gateFrame.scale, { x: 1.22, y: 1.22, duration: 0.22, ease: "power2.out" })
+    .to([leftGate.rotation, rightGate.rotation], {
+      y: (index) => index === 0 ? Math.PI * 0.39 : -Math.PI * 0.39,
+      duration: 0.52,
+      ease: "power3.out"
+    }, "<")
+    .to(camera.position, { z: originalCameraZ - 1.15, duration: 0.52, ease: "power2.inOut" }, "<")
+    .to([leftGate.rotation, rightGate.rotation], {
+      y: 0,
+      duration: 0.32,
+      ease: "power2.in"
+    })
+    .to(camera.position, { z: originalCameraZ, duration: 0.32, ease: "power2.inOut" }, "<")
+    .to(gateFrame.scale, { x: 1, y: 1, duration: 0.32, ease: "power2.out" }, "<")
+    .call(() => {
+      gateMaterial.emissive.setHex(stageHues[activeStage]);
+      gateFrameMaterial.color.setHex(stageHues[activeStage]);
+    });
+  return new Promise((resolve) => timeline.eventCallback("onComplete", resolve));
 }
