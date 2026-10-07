@@ -3,73 +3,70 @@ import { randomInt } from "node:crypto";
 const levelOneScenarios = [
   {
     id: "ARM-PW-01",
-    terminal: "NOVA'S ACCESS TERMINAL",
-    prompt: "NOVA is locked out of the astronomy lab. Cross-check the profile notes and enter the four-digit access code.",
-    context: "The lab technician recovered a partial profile from the room's visitor ledger.",
+    terminal: "LUNA'S ACCESS TERMINAL",
+    prompt: "LUNA is locked out of the astronomy lab. Cross-check the profile notes and enter the four-digit access code.",
+    context: "The lab technician recovered two details from the visitor ledger and one note from the security desk.",
     clues: [
-      "Username: NOVA17",
-      "Fictional birth year: 2006",
-      "Trusted number: 7",
-      "Security note: \"The year is only the beginning. Move forward by the number you trust.\""
+      "Username: LUNA14",
+      "Fictional birth year: 2011",
+      "Security note: \"Start with the birth year. Add the final digit in the username.\""
     ],
-    hint: "Use the trusted number as a small step forward from the recorded year.",
-    expected_answer: "2013"
+    hint: "The note asks for the last username digit, not the whole number in the username.",
+    expected_answer: "2015"
   },
   {
     id: "ARM-PW-02",
     terminal: "ARCHIVE ROOM LOCK",
-    prompt: "A records cabinet rejected its usual code after being moved. Reconcile the archive label with its new room assignment.",
+    prompt: "A cabinet's access code was updated after a room move. Use the change log to recover the new four-digit code.",
     context: "The facilities team moved the cabinet during a routine lab reorganization.",
     clues: [
-      "Archive label: 5934",
-      "Current room: 27",
-      "Move log: \"For this cabinet, its code drops by exactly the new room number.\"",
-      "Operator note: \"The archive label is the starting value.\""
+      "Old cabinet code: 4826",
+      "New room number: 24",
+      "Move log: \"Subtract the new room number from the old cabinet code.\""
     ],
-    hint: "Start with the archive label and apply the room value in the direction implied by the move log.",
-    expected_answer: "5907"
+    hint: "Use the room number as a small subtraction from the old code.",
+    expected_answer: "4802"
   },
   {
     id: "ARM-PW-03",
-    terminal: "ECHO'S BADGE READER",
-    prompt: "ECHO's badge reader is waiting for a four-digit recovery code. Combine the badge record and the operator's number pattern.",
-    context: "The recovery key was assembled from a badge fragment and a repeated personal setting.",
+    terminal: "MIKA'S BADGE READER",
+    prompt: "MIKA's badge reader needs a four-digit recovery code. Combine the badge fragment with one detail from the profile.",
+    context: "The recovery code uses a badge fragment and the length of a pet's name.",
     clues: [
-      "Username: ECHO-36",
-      "Favorite number: 8",
-      "Pet name: KODA",
-      "Security note: \"The badge tail is reduced by the favorite number; the ending repeats that number.\""
+      "Username: MIKA-42",
+      "Pet name: LUNA",
+      "Security note: \"Keep the badge digits first, then write the pet-name letter count twice.\""
     ],
-    hint: "Keep the badge's two-digit tail as the beginning, adjust it using the favorite number, then use the same number twice at the end.",
-    expected_answer: "2888"
+    hint: "Count the letters in the pet's name and use that one-digit count for each of the last two places.",
+    expected_answer: "4244"
   },
   {
     id: "ARM-PW-04",
     terminal: "ORBITAL CONTROL CONSOLE",
-    prompt: "Restore the operator code from two records. The console expects the values in the order written in the security note.",
-    context: "A maintenance reset left one date fragment and one badge fragment in separate logs.",
+    prompt: "Two short records hold the console code. Join the requested date part and room number in the order shown.",
+    context: "A maintenance reset left a birthday and room assignment in the operator log.",
     clues: [
-      "Fictional birthday: 2007-09-24",
-      "Badge serial: LAB-6",
-      "Security note: \"Reverse the birthday's day; then double the badge's final digit. Join the two results.\""
+      "Fictional birthday: 2008-04-13",
+      "Room number: 07",
+      "Security note: \"Use the day of the birthday first, followed by the room number.\""
     ],
-    hint: "The birthday contributes a reversed day, not its year or month; the badge contributes a doubled final digit.",
-    expected_answer: "4212"
+    hint: "Ignore the year and month; keep the two-digit day, then attach the two-digit room number.",
+    expected_answer: "1307"
   },
   {
     id: "ARM-PW-05",
     terminal: "FOUR-POD ACCESS GATE",
-    prompt: "The gate code was split across four technician profiles. Put the records in the right order before entering the recovered code.",
-    context: "An overnight audit recovered four partial badge records from the lab roster.",
+    prompt: "The four-pod gate code is mixed into the technician roster. Sort the entries, then enter the recovered digits.",
+    context: "An overnight audit recovered four badge digits and their room assignments.",
     clues: [
-      "MIRA-6 is assigned to Room 09.",
-      "KAI-1 is assigned to Room 03.",
-      "ZED-8 is assigned to Room 12.",
-      "NOA-3 is assigned to Room 06.",
-      "Security note: \"Read the badge digit from the lowest room number to the highest.\""
+      "MIRA-2 is assigned to Room 04.",
+      "KAI-7 is assigned to Room 01.",
+      "ZED-4 is assigned to Room 03.",
+      "NOA-9 is assigned to Room 02.",
+      "Security note: \"Read badge digits from the lowest room number to the highest.\""
     ],
-    hint: "Sort the four records by room number first; take one badge digit from each in that order.",
-    expected_answer: "1368"
+    hint: "Put the four room numbers in ascending order and take the digit beside each room.",
+    expected_answer: "9742"
   }
 ];
 
@@ -258,7 +255,7 @@ export const LEVEL_QUESTION_COUNTS = [5, 10, 5, 1, 5];
 export const LEVEL_NAMES = ["ARMOR PROTOCOL", "GAMMA BREACH", "THE INITIATIVE", "THE FIRST CODE", "FINAL DIRECTIVE"];
 export const QUALIFYING_SCORES = [50, 60, 70, 70];
 export const LEVEL_ONE_ATTEMPTS = 2;
-export const LEVEL_ONE_QUESTION_MS = 60 * 1000;
+export const LEVEL_ONE_QUESTION_MS = 120 * 1000;
 const challengesById = new Map(CHALLENGE_POOLS.flat().map((challenge) => [challenge.id, challenge]));
 
 export function getChallenge(id) {

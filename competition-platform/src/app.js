@@ -153,7 +153,7 @@ function renderQuestion(question, level, questionIndex, totalQuestions) {
     <aside class="panel side-panel"><div class="side-title">Mission telemetry</div><div class="side-stat"><span>Facility</span><strong>0${level} / 05</strong></div><div class="side-stat"><span>Challenge</span><strong>${questionIndex + 1} / ${totalQuestions}</strong></div><div class="side-progress">${LEVELS.map((_, i) => `<span class="${i < level - 1 ? "done" : ""}"></span>`).join("")}</div><div class="intel-note">Your assigned mission data is secured to this participant session.</div></aside></div>`;
   showView(markup, level - 1);
   installActivityMonitoring();
-  if (level === 1 || level === 5) startQuestionTimer(question.seconds_remaining ?? (level === 1 ? 60 : 30));
+  if (level === 1 || level === 5) startQuestionTimer(question.seconds_remaining ?? (level === 1 ? 120 : 30));
 }
 
 function playMissionReaction(reaction) {
@@ -279,6 +279,7 @@ function submitTextAnswer() {
 
 function startQuestionTimer(secondsRemaining) {
   const durationMs = Math.max(0, secondsRemaining * 1000);
+  const fullDurationMs = game.level === 1 ? 120_000 : 30_000;
   // The backend enforces the exact deadline; this buffer avoids submitting early on timer rounding.
   const endsAt = Date.now() + durationMs + 250;
   const timer = document.querySelector("#round-timer");
@@ -286,8 +287,13 @@ function startQuestionTimer(secondsRemaining) {
   const update = () => {
     const remaining = Math.max(0, endsAt - Date.now());
     const displayedRemaining = Math.min(durationMs, remaining);
-    if (timer) timer.textContent = `${Math.ceil(displayedRemaining / 1000)}s`;
-    if (bar) bar.style.width = `${durationMs ? displayedRemaining / durationMs * 100 : 0}%`;
+    const seconds = Math.ceil(displayedRemaining / 1000);
+    if (timer) {
+      timer.textContent = game.level === 1
+        ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+        : `${seconds}s`;
+    }
+    if (bar) bar.style.width = `${fullDurationMs ? displayedRemaining / fullDurationMs * 100 : 0}%`;
     if (remaining <= 0) {
       clearInterval(timerHandle);
       timerHandle = null;

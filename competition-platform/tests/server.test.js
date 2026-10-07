@@ -118,6 +118,7 @@ test("server challenge pools cover the requested mission distribution and unique
     assert.ok(CHALLENGE_POOLS[level - 1].every((challenge) => challenge.options === undefined));
   }
   assert.equal(CHALLENGE_POOLS[0].length, 5);
+  assert.deepEqual(CHALLENGE_POOLS[0].map((challenge) => challenge.expected_answer), ["2015", "4802", "4244", "1307", "9742"]);
   assert.ok(CHALLENGE_POOLS[0].every((challenge) => /^\d{4}$/.test(challenge.expected_answer)));
   assert.ok(CHALLENGE_POOLS[0].every((challenge) => challenge.clues.length >= 3 && challenge.clues.length <= 5));
   assert.ok(CHALLENGE_POOLS[0].every((challenge) =>
@@ -151,7 +152,7 @@ test("server stores and evaluates a complete participant session, with private a
   assert.equal(registration.data.level, 1);
   assert.ok(initialChallengeIds.includes(registration.data.question.id));
   assert.equal(initialChallengeIds.length, 5);
-  assert.equal(registration.data.question.seconds_remaining, 60);
+  assert.equal(registration.data.question.seconds_remaining, 120);
   assert.equal(registration.data.question.attempts_remaining, 2);
   assert.equal(registration.data.question.clues.length >= 3, true);
   assert.equal(registration.data.question.options, undefined);
@@ -300,7 +301,7 @@ test("server stores and evaluates a complete participant session, with private a
       if (level === 1 && result.data.next_challenge) {
         const next = await request("/api/participant/current", { cookie: participantCookieValue });
         assert.equal(next.data.question.id, assigned[index + startIndex + 1]);
-        assert.equal(next.data.question.seconds_remaining, 60);
+        assert.equal(next.data.question.seconds_remaining, 120);
       }
     }
     return result;
@@ -554,7 +555,7 @@ test("server stores and evaluates a complete participant session, with private a
     .get(limitedId, lockedChallenge.id).count, 2);
   const timedPassword = getChallenge(limitedIds[1]);
   server.database.prepare("UPDATE participants SET question_started_at = ? WHERE id = ?")
-    .run(Date.now() - 61_000, limitedId);
+    .run(Date.now() - 121_000, limitedId);
   const timedOut = await request("/api/participant/answer", {
     method: "POST",
     cookie: limitedCookie,
@@ -563,7 +564,7 @@ test("server stores and evaluates a complete participant session, with private a
   assert.equal(timedOut.data.next_challenge, true);
   const thirdQuestion = (await request("/api/participant/current", { cookie: limitedCookie })).data.question;
   assert.equal(thirdQuestion.ordinal, 3);
-  assert.equal(thirdQuestion.seconds_remaining, 60);
+  assert.equal(thirdQuestion.seconds_remaining, 120);
   const timeoutRecord = server.database.prepare("SELECT submitted_answer, points_awarded FROM answers WHERE participant_id = ? AND question_id = ?")
     .get(limitedId, timedPassword.id);
   assert.equal(timeoutRecord.submitted_answer, null);
