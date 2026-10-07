@@ -5,11 +5,11 @@ export const FINAL_QUESTION_SECONDS = 30;
 export const FINAL_QUESTION_COUNT = 5;
 
 export const LEVELS = [
-  { title: "Password Fortress", theme: "PASSWORD CHALLENGE", qualify: 50 },
-  { title: "Link Verification Round", theme: "PHISHING DETECTION", qualify: 60 },
-  { title: "Cipher Chamber", theme: "CRYPTOGRAPHY PUZZLE", qualify: 70 },
-  { title: "Digital Investigation", theme: "SOURCE CLUE", qualify: 70 },
-  { title: "Cyber Intelligence", theme: "FINAL CODE", qualify: null }
+  { title: "ARMOR PROTOCOL", theme: "PASSWORD CHALLENGE", environment: "ARMORED AI COMMAND LAB", qualify: 50 },
+  { title: "GAMMA BREACH", theme: "PHISHING DETECTION", environment: "EMERALD ENERGY RESEARCH FACILITY", qualify: 60 },
+  { title: "THE INITIATIVE", theme: "CRYPTOGRAPHY PUZZLE", environment: "FUTURISTIC COMMAND TOWER", qualify: 70 },
+  { title: "THE FIRST CODE", theme: "JAVA SOURCE CODE CLUE", environment: "RETRO-FUTURISTIC CLASSIFIED LAB", qualify: 70 },
+  { title: "FINAL DIRECTIVE", theme: "FINAL CYBER TOOL CODE", environment: "CLASSIFIED INTELLIGENCE BUNKER", qualify: null }
 ];
 
 export const PHISHING_CASES = [

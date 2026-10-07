@@ -13,6 +13,8 @@
       --gold: #f3cb7a;
       --red: #ff647e;
       --green: #8df5c6;
+      --stage-glow: #ef5848;
+      --stage-accent: #f3bd62;
       font-family: Manrope, "Segoe UI", sans-serif;
       font-synthesis: none;
       text-rendering: optimizeLegibility;
@@ -173,6 +175,7 @@
     .briefing-num { color: var(--cyan); font: 11px "DM Mono", monospace; }
     .briefing-name { font-size: 11px; font-weight: 700; letter-spacing: .035em; }
     .briefing-theme { display: block; margin-top: 3px; color: var(--muted); font: 9px "DM Mono", monospace; }
+    .briefing-environment { display: block; margin-top: 4px; color: var(--stage-accent); font: 8px "DM Mono", monospace; letter-spacing: .07em; }
     .briefing-score { color: #8ea0b4; font: 9px "DM Mono", monospace; }
     .resume-row { margin-top: 14px; padding: 12px; border: 1px solid rgba(116, 244, 237, .19); color: #b7c7d5; font-size: 11px; }
     .resume-row .button { margin-top: 10px; }
@@ -180,6 +183,7 @@
     .game-head { margin-bottom: 20px; }
     .game-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
     .level-label { color: #a7b7c7; font: 10px "DM Mono", monospace; letter-spacing: .14em; }
+    .level-environment { display: block; margin-top: 6px; color: var(--stage-accent); font-size: 9px; letter-spacing: .1em; }
     .score-hud { display: flex; align-items: center; gap: 8px; font: 10px "DM Mono", monospace; letter-spacing: .08em; }
     .score-value { color: var(--cyan); }
     .progress-track { height: 3px; overflow: hidden; background: rgba(165,193,220,.12); }
@@ -311,3 +315,11 @@
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
     }
+
+    body[data-stage] {
+      background:
+        radial-gradient(ellipse at 50% -20%, color-mix(in srgb, var(--stage-glow) 18%, transparent), transparent 55%),
+        radial-gradient(ellipse at 90% 70%, color-mix(in srgb, var(--stage-accent) 9%, transparent), transparent 38%),
+        var(--bg);
+    }
+    body[data-stage]::after { border-color: color-mix(in srgb, var(--stage-glow) 24%, transparent); box-shadow: 0 0 100px color-mix(in srgb, var(--stage-glow) 18%, transparent), inset 0 0 90px color-mix(in srgb, var(--stage-accent) 12%, transparent); }

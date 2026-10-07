@@ -20,6 +20,7 @@ For a production-style local run, run `npm run build` followed by `npm start`. T
 
 ## Competition flow
 
+- The five participant stages use original Three.js environment geometry and per-stage lighting rather than scraped Google/Pinterest artwork: an armored AI lab, emerald-energy research facility, futuristic command tower, retro-futuristic classified lab, and intelligence bunker.
 - Level 1, **ARMOR PROTOCOL**: exactly five beginner-friendly four-digit password investigations. Each challenge combines 2–3 fictional profile clues using simple addition, subtraction, digit-combination, or ordering; each is worth 20 marks, with two attempts and a fresh two-minute deadline. A wrong first attempt returns a contextual hint without revealing the password. Qualification is 50.
 - Level 2, **GAMMA BREACH**: ten typed-response fictional URL investigations, randomly assigned from a 20-challenge pool; qualification is 60.
 - Level 3, **THE INITIATIVE**: five typed cryptography challenges, randomly assigned from a 15-challenge pool; qualification is 70.
