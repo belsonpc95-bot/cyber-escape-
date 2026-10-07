@@ -1,7 +1,17 @@
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+
+const portalDependencies = fileURLToPath(new URL("./node_modules/", import.meta.url));
 
 export default defineConfig({
   root: ".",
+  resolve: {
+    alias: [
+      { find: /^three$/, replacement: resolve(portalDependencies, "three") },
+      { find: /^gsap$/, replacement: resolve(portalDependencies, "gsap") }
+    ]
+  },
   server: {
     host: "0.0.0.0",
     proxy: {
