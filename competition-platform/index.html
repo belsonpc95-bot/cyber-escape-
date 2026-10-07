@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a12">
+  <meta name="description" content="Cyber Escape Room — secure global cybersecurity competition">
+  <title>CYBER ESCAPE ROOM — Competition Portal</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="world-canvas" aria-hidden="true"></div>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Cyber Escape Room participant portal">
+        <div class="brand-mark"><span>⌘</span></div>
+        <div><div class="brand-name">CYBER ESCAPE ROOM</div><span class="brand-sub">SECURE COMPETITION NETWORK</span></div>
+      </a>
+      <nav class="portal-nav" aria-label="Portal navigation">
+        <a href="./">PARTICIPANT</a>
+        <a href="?portal=admin">ADMIN</a>
+      </nav>
+    </header>
+    <main id="app" aria-live="polite"></main>
+    <footer class="footer">SECURE COMPETITION NETWORK · PARTICIPANT AND ADMIN DATA ARE ISOLATED</footer>
+  </div>
+  <div id="toast-region" aria-live="polite"></div>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>

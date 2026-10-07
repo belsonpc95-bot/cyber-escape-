@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: cyber-escape-room-competition
+    runtime: node
+    plan: starter
+    numInstances: 1
+    rootDir: competition-platform
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    disk:
+      name: cyber-escape-room-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_PATH
+        value: /var/data/competition.sqlite
+      - key: ADMIN_ID
+        value: cybersecurity2024
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
