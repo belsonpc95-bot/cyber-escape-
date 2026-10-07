@@ -68,7 +68,6 @@ function showView(markup, stage = 0) {
       else if (action === "resume") resumeParticipant();
       else if (action === "admin-login") loginAdmin();
       else if (action === "admin-logout") logoutAdmin();
-      else if (action === "answer") submitChoice(Number(control.dataset.option));
       else if (action === "advance-level") advanceLevel(control);
       else if (action === "return") location.assign("./");
       else if (action === "details") showParticipantDetails(control.dataset.id);
@@ -86,9 +85,6 @@ function showView(markup, stage = 0) {
       if (form.dataset.form === "admin-login") await loginAdmin();
       if (form.dataset.form === "answer") await submitTextAnswer();
     });
-  });
-  app.querySelectorAll("[data-select]").forEach((control) => {
-    control.addEventListener("click", () => selectAnswer(Number(control.dataset.select)));
   });
 }
 
@@ -115,17 +111,18 @@ function renderRegistration() {
 }
 
 function publicQuestionMarkup(question) {
-  const options = Array.isArray(question.options) ? question.options : [];
   const timer = Number.isInteger(question.seconds_remaining) ? `<div class="timer"><span aria-hidden="true">◷</span><strong id="round-timer">${question.seconds_remaining}s</strong></div><div class="timer-bar"><span id="timer-progress"></span></div>` : "";
-  const code = question.source_code ? `<div class="code-window"><div class="code-bar"><i></i><i></i><i></i>&nbsp;StudentMarks.java</div><pre>${escapeHtml(question.source_code)}</pre></div><div class="tiny-label">Start with A = 1.</div>` : "";
-  const extra = question.alphabet ? `<div class="alphabet">${escapeHtml(question.alphabet.replace("<br>", "\n"))}</div>` : "";
-  const message = question.message ? `<p class="game-description">${escapeHtml(question.message)}</p>` : "";
-  return `${message}${extra}${code}
-    <div class="question-prompt">${escapeHtml(question.prompt)}</div>
+  const artifact = question.level === 5
+    ? `<div class="tool-string" aria-label="Captured signal">${escapeHtml(question.artifact)}</div>`
+    : `<div class="mission-artifact"><div class="artifact-heading"><span class="live-dot"></span>${escapeHtml(question.terminal || "EVIDENCE CONSOLE")}</div><pre>${escapeHtml(question.artifact || "")}</pre></div>`;
+  return `<p class="mission-objective">${escapeHtml(question.prompt)}</p>
+    ${artifact}
     ${timer}
-    ${options.length ? `<div class="answer-options">${options.map((option, i) => `<button type="button" class="answer-option" data-select="${i}">${escapeHtml(option)}</button>`).join("")}</div>` : `<form class="answer-form" data-form="answer"><input name="answer" class="text-input" maxlength="200" autocomplete="off" placeholder="Your response" required><button class="button" type="submit">Submit response</button></form>`}
-    <div class="notice" id="game-notice" role="status">Your response is recorded privately.</div>
-    ${options.length ? `<button type="button" class="button" data-action="answer" data-option="-1" id="submit-option" disabled>Submit response</button>` : ""}`;
+    <form class="answer-form terminal-input" data-form="answer">
+      <label for="mission-answer">${escapeHtml(question.input_label || "TERMINAL INPUT")}</label>
+      <div class="terminal-command"><span aria-hidden="true">&gt;</span><input id="mission-answer" name="answer" class="text-input" maxlength="200" autocomplete="off" placeholder="${escapeHtml(question.placeholder || "Enter your finding")}" required><button class="button" type="submit">EXECUTE</button></div>
+    </form>
+    <div class="notice" id="game-notice" role="status">Your command will be evaluated by the secure system.</div>`;
 }
 
 function renderQuestion(question, level, questionIndex, totalQuestions) {
@@ -135,25 +132,27 @@ function renderQuestion(question, level, questionIndex, totalQuestions) {
   game.questionIndex = questionIndex;
   game.totalQuestions = totalQuestions;
   const levelInfo = LEVELS[level - 1];
-  const intro = level === 1 ? `<p class="game-description">Ten password-security challenges · 10 marks each. Choose the safest response to each scenario.</p>` :
-    level === 3 ? `<p class="game-description">Caesar cipher: shift each plaintext letter forward by the numerical key, wrapping Z to A. Encrypt each message below.</p>` :
-    level === 5 ? `<p class="game-description">Five signals · 30 seconds per question · 2 minutes 30 seconds maximum. Identify the cybersecurity tool hidden inside the signal.</p>` : "";
-  const contentQuestion = level === 3
-      ? { ...question, prompt: `Encrypt this plaintext using KEY = ${question.cipher_key}: ${question.plaintext}`, alphabet: "A B C D E F G H I J K L M<br>N O P Q R S T U V W X Y Z" }
-      : level === 4
-        ? { ...question, prompt: "Identify the hidden message.", source_code: question.source_code }
-        : level === 5
-          ? { ...question, prompt: `Signal ${question.ordinal} / 5 · 20 points`, message: `Question ${question.ordinal} of 5` }
-          : question;
-  const markup = `<section class="game-head"><div class="game-meta"><span class="level-label">LEVEL 0${level} / 05 · ${levelInfo.title}</span><span class="participant-progress">QUESTION ${questionIndex + 1} / ${totalQuestions}</span></div><div class="progress-track"><div class="progress-fill" style="width:${Math.round(questionIndex / totalQuestions * 100)}%"></div></div></section>
-    <div class="stage-grid animate-in"><section class="panel challenge-panel"><div class="eyebrow">${levelInfo.theme}</div><h2>${levelInfo.title}</h2>${intro}
-    ${level === 5 ? `<div class="tool-string">${escapeHtml(question.display_signal)}</div>` : ""}
-    ${level === 3 ? `<div class="key-badge">KEY ${question.cipher_key} · FORWARD SHIFT</div>` : ""}
-    ${publicQuestionMarkup(contentQuestion)}</section>
-    <aside class="panel side-panel"><div class="side-title">Mission telemetry</div><div class="side-stat"><span>Level</span><strong>0${level} / 05</strong></div><div class="side-stat"><span>Question</span><strong>${questionIndex + 1} / ${totalQuestions}</strong></div><div class="side-progress">${LEVELS.map((_, i) => `<span class="${i < level - 1 ? "done" : ""}"></span>`).join("")}</div><div class="intel-note">Answers and evaluation are private. Your responses are recorded securely.</div></aside></div>`;
+  const intros = {
+    1: "Advanced security laboratory · inspect each system trace and enter the containment command.",
+    2: "Unstable experimental facility · investigate captured links and submit the destination evidence.",
+    3: "Cyber operations command · recover encrypted payloads using the clues in each transmission.",
+    4: "Classified investigation room · trace the source logic and reconstruct the hidden incident token.",
+    5: "Final high-pressure directive · 5 signals, 30 seconds each, 150 seconds maximum. No time carries over."
+  };
+  const markup = `<section class="game-head"><div class="game-meta"><span class="level-label">LEVEL 0${level} / 05 · ${levelInfo.title}</span><span class="participant-progress">CHALLENGE ${questionIndex + 1} / ${totalQuestions}</span></div><div class="progress-track"><div class="progress-fill" style="width:${Math.round(questionIndex / totalQuestions * 100)}%"></div></div></section>
+    <div class="stage-grid animate-in"><section class="panel challenge-panel" data-reaction="idle"><div class="eyebrow">${levelInfo.theme} · LIVE MISSION</div><h2>${escapeHtml(question.terminal || levelInfo.title)}</h2><p class="game-description">${intros[level]}</p>
+    ${publicQuestionMarkup({ ...question, level })}</section>
+    <aside class="panel side-panel"><div class="side-title">Mission telemetry</div><div class="side-stat"><span>Facility</span><strong>0${level} / 05</strong></div><div class="side-stat"><span>Challenge</span><strong>${questionIndex + 1} / ${totalQuestions}</strong></div><div class="side-progress">${LEVELS.map((_, i) => `<span class="${i < level - 1 ? "done" : ""}"></span>`).join("")}</div><div class="intel-note">Your assigned mission data is secured to this participant session.</div></aside></div>`;
   showView(markup, level - 1);
   installActivityMonitoring();
   if (level === 5) startQuestionTimer(question.seconds_remaining ?? 30);
+}
+
+function playMissionReaction(reaction) {
+  const panel = app.querySelector(".challenge-panel");
+  if (!panel || !["breach", "deflect"].includes(reaction)) return Promise.resolve();
+  panel.dataset.reaction = reaction;
+  return new Promise((resolve) => setTimeout(resolve, 480));
 }
 
 function renderLevelCompletion(completion) {
@@ -226,7 +225,13 @@ async function submitAnswer(answer) {
       answer,
       client_time: new Date().toISOString()
     });
+    await playMissionReaction(result.reaction);
     if (result.completion) renderLevelCompletion(result.completion);
+    else if (result.next_challenge) {
+      const next = await participantRequest("current");
+      if (next.session_ended) renderMissionEnded();
+      else renderQuestion(next.question, next.level, next.question_index, next.level_question_count);
+    }
     else if (result.question) renderQuestion(result.question, result.level, result.question_index, result.level_question_count);
     else renderMissionEnded();
   } catch (error) {
@@ -236,22 +241,6 @@ async function submitAnswer(answer) {
   } finally {
     answerBusy = false;
   }
-}
-
-function submitChoice(index) {
-  if (index === -1) index = game.selected;
-  if (!Number.isInteger(index) || index < 0) return;
-  submitAnswer(String(index));
-}
-
-function selectAnswer(index) {
-  if (!game || answerBusy) return;
-  game.selected = index;
-  app.querySelectorAll(".answer-option").forEach((button, i) => {
-    button.classList.toggle("selected", i === index);
-  });
-  const submit = document.querySelector("#submit-option");
-  if (submit) submit.disabled = false;
 }
 
 function submitTextAnswer() {
@@ -638,7 +627,10 @@ async function loadParticipantDetails(id) {
   if (generation !== adminGeneration || !currentAdminUser) return;
   const target = document.querySelector("#participant-details");
   if (!target) return;
-  const markup = `<h3>Recorded answers and evaluation</h3><div class="table-scroll"><table><thead><tr><th>Level</th><th>Question</th><th>Prompt</th><th>Answer</th><th>Evaluation</th><th>Points</th><th>Submitted</th></tr></thead><tbody>${result.answers.map((answer) => `<tr><td>${answer.level}</td><td>${answer.question_ordinal}</td><td>${escapeHtml(answer.question)}</td><td>${escapeHtml(answer.submitted_answer || "Unanswered")}</td><td>${answer.is_correct ? "Correct" : "Incorrect"}</td><td>${answer.points_awarded}</td><td>${escapeHtml(new Date(answer.answered_at).toLocaleString())}</td></tr>`).join("")}</tbody></table></div><h3>Monitoring events</h3><ul>${result.events.map((event) => `<li>${escapeHtml(event.event_type)} · ${escapeHtml(new Date(event.occurred_at).toLocaleString())}</li>`).join("") || "<li>No activity events.</li>"}</ul>`;
+  const assigned = Object.entries(result.assigned_challenges).map(([level, challenges]) =>
+    `<section class="assigned-level"><h4>LEVEL 0${level} · ${escapeHtml(LEVELS[Number(level) - 1].title)}</h4>${challenges.map((challenge) => `<details class="assigned-challenge"><summary>${String(challenge.ordinal).padStart(2, "0")} · ${escapeHtml(challenge.terminal)}</summary><p>${escapeHtml(challenge.prompt)}</p><pre>${escapeHtml(challenge.artifact)}</pre></details>`).join("")}</section>`
+  ).join("");
+  const markup = `<h3>Assigned mission challenges</h3><div class="assigned-challenge-list">${assigned}</div><h3>Recorded answers and evaluation</h3><div class="table-scroll"><table><thead><tr><th>Level</th><th>Challenge</th><th>Prompt</th><th>Answer</th><th>Evaluation</th><th>Points</th><th>Submitted</th></tr></thead><tbody>${result.answers.map((answer) => `<tr><td>${answer.level}</td><td>${answer.question_ordinal}</td><td>${escapeHtml(answer.question)}</td><td>${escapeHtml(answer.submitted_answer || "Unanswered")}</td><td>${answer.is_correct ? "Correct" : "Incorrect"}</td><td>${answer.points_awarded}</td><td>${escapeHtml(new Date(answer.answered_at).toLocaleString())}</td></tr>`).join("")}</tbody></table></div><h3>Monitoring events</h3><ul>${result.events.map((event) => `<li>${escapeHtml(event.event_type)} · ${escapeHtml(new Date(event.occurred_at).toLocaleString())}</li>`).join("") || "<li>No activity events.</li>"}</ul>`;
   participantDetailCache.set(id, markup);
   target.innerHTML = markup;
 }

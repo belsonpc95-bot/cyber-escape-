@@ -20,13 +20,15 @@ For a production-style local run, run `npm run build` followed by `npm start`. T
 
 ## Competition flow
 
-- Level 1: ten 10-point password-security questions; qualification is 50.
-- Level 2: ten 10-point fictional-link questions; qualification is 60.
-- Level 3: ten 10-point Caesar cipher questions; qualification is 70.
-- Level 4: ten 10-point A1Z26 Java-source investigations; qualification is 70.
-- Level 5: five 20-point tool-identification questions. The server starts a new 30-second deadline for each question, rejects early blank responses, and records a timeout as unanswered/wrong. Unused time does not carry forward.
+- Level 1, **ARMOR PROTOCOL**: ten typed-response security operations, randomly assigned from a 20-challenge pool; qualification is 50.
+- Level 2, **GAMMA BREACH**: ten typed-response fictional URL investigations, randomly assigned from a 20-challenge pool; qualification is 60.
+- Level 3, **THE INITIATIVE**: five typed cryptography challenges, randomly assigned from a 15-challenge pool; qualification is 70.
+- Level 4, **THE FIRST CODE**: one difficult, multi-step Java-source investigation, randomly assigned from five variants; qualification is 70.
+- Level 5, **FINAL DIRECTIVE**: five hidden-tool signal challenges randomly assigned from a 12-challenge pool. Each gets a fresh server-enforced 30-second deadline; unused time does not carry forward and a timeout is recorded as unanswered/wrong.
+- The server stores each participant's challenge IDs and resumes the same active challenge set after refresh/reconnect. Different challenge sets are assigned to participants whenever unused combinations remain.
+- Challenges use terminal-style text entry and evidence displays, not answer-option cards. Correct answers remain server-side; participants receive only their active challenge and a brief environment reaction.
 - After Levels 1–4, participants see only that level's saved score and qualification result. Qualified participants must press **NEXT LEVEL**; failed participants see **NOT QUALIFIED** and cannot advance. After Level 5, only the Level 5 score and mission-complete state are shown.
-- Total question count: 45 (10 + 10 + 10 + 10 + 5). Each level is worth 100 marks, for 500 total. Only those who qualify through Level 4 and finish Level 5 are finalists. The admin leaderboard ranks total score, Level 5 score, Level 3 score, and then earlier Level 5 completion time.
+- Total challenge count: 31 (10 + 10 + 5 + 1 + 5). Each level is worth 100 marks, for 500 total. Only those who qualify through Level 4 and finish Level 5 are finalists. The admin leaderboard ranks total score, Level 5 score, Level 3 score, and then earlier Level 5 completion time.
 
 The admin dashboard fetches one full server snapshot after sign-in, then opens an authenticated same-origin Server-Sent Events (SSE) stream. Participant registrations, score/progress changes, and monitoring events are pushed incrementally from the central Node service as database-backed revision/event deltas. The stream uses a durable database cursor for reconnect catch-up, heartbeats to survive idle proxies, automatic browser reconnect after network changes, session-expiry handling, and explicit cleanup on logout or dashboard teardown. It does not poll or contact participant devices.
 

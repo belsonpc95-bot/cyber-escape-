@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { randomBytes, scryptSync } from "node:crypto";
 import { after, before, test } from "node:test";
 import { createCompetitionServer } from "../server.js";
-import { LEVEL_QUESTION_COUNTS, QUESTIONS } from "../server/questions.js";
+import { assignChallenges, CHALLENGE_POOLS, getChallenge, LEVEL_QUESTION_COUNTS, LEVEL_NAMES, QUALIFYING_SCORES } from "../server/questions.js";
 
 const testDirectory = mkdtempSync(join(tmpdir(), "cyber-escape-room-"));
 const databasePath = join(testDirectory, "competition.sqlite");
@@ -77,11 +77,17 @@ async function readStreamUntil(reader, marker, timeoutMs = 5000) {
   return output;
 }
 
+function assignedChallengeIds(participantId, level) {
+  const row = server.database.prepare("SELECT challenge_assignments FROM participants WHERE id = ?").get(participantId);
+  return JSON.parse(row.challenge_assignments)[String(level)];
+}
+
 function assertNoParticipantEvaluation(value) {
   if (Array.isArray(value)) {
     value.forEach(assertNoParticipantEvaluation);
     return;
   }
+
   if (!value || typeof value !== "object") return;
   for (const [key, child] of Object.entries(value)) {
     assert.doesNotMatch(
@@ -99,18 +105,20 @@ after(async () => {
   rmSync(testDirectory, { recursive: true, force: true });
 });
 
-test("question bank has the exact 45-question level distribution and 100 marks per level", () => {
-  assert.deepEqual(LEVEL_QUESTION_COUNTS, [10, 10, 10, 10, 5]);
-  assert.equal(QUESTIONS.length, 45);
+test("server challenge pools cover the requested mission distribution and unique participant sets", () => {
+  assert.deepEqual(LEVEL_QUESTION_COUNTS, [10, 10, 5, 1, 5]);
+  assert.deepEqual(LEVEL_NAMES, ["ARMOR PROTOCOL", "GAMMA BREACH", "THE INITIATIVE", "THE FIRST CODE", "FINAL DIRECTIVE"]);
+  assert.deepEqual(QUALIFYING_SCORES, [50, 60, 70, 70]);
+  assert.deepEqual(CHALLENGE_POOLS.map((pool) => pool.length), [20, 20, 15, 5, 12]);
   for (let level = 1; level <= 5; level += 1) {
-    const questions = QUESTIONS.filter((question) => question.level === level);
-    assert.equal(questions.length, LEVEL_QUESTION_COUNTS[level - 1]);
-    assert.deepEqual(questions.map((question) => question.ordinal), Array.from(
-      { length: LEVEL_QUESTION_COUNTS[level - 1] },
-      (_, index) => index + 1
-    ));
-    assert.equal(questions.reduce((sum, question) => sum + question.points, 0), 100);
+    const selected = assignChallenges(level);
+    assert.equal(selected.length, LEVEL_QUESTION_COUNTS[level - 1]);
+    assert.equal(new Set(selected).size, selected.length);
+    assert.equal(selected.reduce((sum, id) => sum + getChallenge(id).points, 0), 100);
+    assert.ok(CHALLENGE_POOLS[level - 1].every((challenge) => challenge.options === undefined));
   }
+  const usedInvestigation = assignChallenges(4);
+  assert.notDeepEqual(assignChallenges(4, [usedInvestigation]), usedInvestigation);
 });
 
 test("server stores and evaluates a complete participant session, with private admin access", async () => {
@@ -132,8 +140,11 @@ test("server stores and evaluates a complete participant session, with private a
   assertNoParticipantEvaluation(registration.data);
   const participantCookie = cookieFrom(registration.response);
   const participantId = registration.data.participant_id;
+  const initialChallengeIds = assignedChallengeIds(participantId, 1);
   assert.equal(registration.data.level, 1);
-  assert.equal(registration.data.question.id, "L1-1");
+  assert.ok(initialChallengeIds.includes(registration.data.question.id));
+  assert.equal(initialChallengeIds.length, 10);
+  assert.equal(registration.data.question.options, undefined);
   const prematureAdvance = await request("/api/participant/advance", {
     method: "POST",
     cookie: participantCookie,
@@ -148,7 +159,7 @@ test("server stores and evaluates a complete participant session, with private a
   const refreshed = await request("/api/participant/current", { cookie: participantCookie });
   assertNoParticipantEvaluation(refreshed.data);
   assert.equal(refreshed.data.participant_id, participantId);
-  assert.equal(refreshed.data.question.id, "L1-1");
+  assert.equal(refreshed.data.question.id, registration.data.question.id);
   const secondRegistration = await request("/api/participant/register", {
     method: "POST",
     body: {
@@ -162,6 +173,7 @@ test("server stores and evaluates a complete participant session, with private a
   assert.equal(secondRegistration.response.status, 201);
   assert.notEqual(secondRegistration.data.participant_id, participantId);
   const secondParticipantCookie = cookieFrom(secondRegistration.response);
+  assert.notDeepEqual(assignedChallengeIds(secondRegistration.data.participant_id, 1), initialChallengeIds);
 
   const wrongAdminPassword = await request("/api/admin/login", {
     method: "POST",
@@ -240,11 +252,24 @@ test("server stores and evaluates a complete participant session, with private a
     assertNoParticipantEvaluation(result.data);
     return result;
   };
+  const submitAssignedLevel = async (participantCookieValue, id, level, successCount) => {
+    const assigned = assignedChallengeIds(id, level);
+    let result;
+    for (const [index, challengeId] of assigned.entries()) {
+      const challenge = getChallenge(challengeId);
+      const submitted = index < successCount ? challenge.expected_answer : "INVALID-RESPONSE";
+      result = await request("/api/participant/answer", {
+        method: "POST",
+        cookie: participantCookieValue,
+        body: { question_id: challengeId, answer: submitted }
+      });
+      assertNoParticipantEvaluation(result.data);
+      assert.equal(result.response.status, 200, `Level ${level} challenge ${index + 1} is accepted`);
+    }
+    return result;
+  };
   let answer;
-  for (const question of QUESTIONS.filter((item) => item.level === 1)) {
-    answer = await submit(question.id, question.expected_answer);
-    assert.equal(answer.response.status, 200, `Level 1 question ${question.ordinal} is accepted`);
-  }
+  answer = await submitAssignedLevel(participantCookie, participantId, 1, 10);
   assert.equal(answer.data.level_complete, true);
   assert.deepEqual(answer.data.completion, {
     level: 1,
@@ -258,7 +283,7 @@ test("server stores and evaluates a complete participant session, with private a
   assert.equal("points_awarded" in answer.data, false);
   assert.equal("total_score" in answer.data, false);
   assert.equal("level2_score" in answer.data, false);
-  const staleAnswer = await submit("L1-10", QUESTIONS.find((question) => question.id === "L1-10").expected_answer);
+  const staleAnswer = await submit(initialChallengeIds.at(-1), getChallenge(initialChallengeIds.at(-1)).expected_answer);
   assert.equal(staleAnswer.response.status, 409);
 
   let current = await request("/api/participant/current", { cookie: participantCookie });
@@ -270,41 +295,37 @@ test("server stores and evaluates a complete participant session, with private a
     body: {}
   });
   assert.equal(current.data.level, 2);
-  assert.equal(current.data.question.id, "L2-1");
-  for (const question of QUESTIONS.filter((item) => item.level === 2)) {
-    answer = await submit(question.id, question.expected_answer);
-    assert.equal(answer.response.status, 200, `Level 2 question ${question.ordinal} is accepted`);
-  }
+  assert.equal(current.data.question.id, assignedChallengeIds(participantId, 2)[0]);
+  answer = await submitAssignedLevel(participantCookie, participantId, 2, 10);
   assert.equal(answer.data.completion.level_name, "GAMMA BREACH");
   current = await request("/api/participant/advance", { method: "POST", cookie: participantCookie, body: {} });
   assert.equal(current.data.level, 3);
-  for (const question of QUESTIONS.filter((item) => item.level === 3)) {
-    answer = await submit(question.id, question.expected_answer);
-    assert.equal(answer.response.status, 200, `Level 3 question ${question.ordinal} is accepted`);
-  }
+  answer = await submitAssignedLevel(participantCookie, participantId, 3, 5);
   assert.equal(answer.data.completion.level_name, "THE INITIATIVE");
   current = await request("/api/participant/advance", { method: "POST", cookie: participantCookie, body: {} });
   assert.equal(current.data.level, 4);
-  for (const question of QUESTIONS.filter((item) => item.level === 4)) {
-    answer = await submit(question.id, question.expected_answer);
-    assert.equal(answer.response.status, 200, `Level 4 question ${question.ordinal} is accepted`);
-  }
+  assert.equal(assignedChallengeIds(participantId, 4).length, 1);
+  answer = await submitAssignedLevel(participantCookie, participantId, 4, 1);
   assert.equal(answer.data.level_complete, true);
   assert.equal(answer.data.completion.level_name, "THE FIRST CODE");
 
   current = await request("/api/participant/advance", { method: "POST", cookie: participantCookie, body: {} });
   assert.equal(current.data.level, 5);
+  assert.equal(assignedChallengeIds(participantId, 5).length, 5);
   assert.equal(current.data.question.seconds_remaining, 30);
-  const earlyTimeout = await submit("L5-1", "");
+  const finalChallengeIds = assignedChallengeIds(participantId, 5);
+  const earlyTimeout = await submit(finalChallengeIds[0], "");
   assert.equal(earlyTimeout.response.status, 400);
 
   for (let ordinal = 1; ordinal <= 5; ordinal += 1) {
-    const question = QUESTIONS.find((item) => item.id === `L5-${ordinal}`);
+    const question = getChallenge(finalChallengeIds[ordinal - 1]);
     if (ordinal === 1) {
       answer = await submit(question.id, question.expected_answer);
       assert.equal(answer.response.status, 200);
-      assert.equal(answer.data.question.ordinal, 2);
-      assert.equal(answer.data.question.seconds_remaining, 30);
+      assert.equal(answer.data.next_challenge, true);
+      current = await request("/api/participant/current", { cookie: participantCookie });
+      assert.equal(current.data.question.ordinal, 2);
+      assert.equal(current.data.question.seconds_remaining, 30);
       continue;
     }
     server.database.prepare("UPDATE participants SET question_started_at = ? WHERE id = ?")
@@ -312,8 +333,10 @@ test("server stores and evaluates a complete participant session, with private a
     answer = await submit(question.id, question.expected_answer);
     assert.equal(answer.response.status, 200);
     if (ordinal < 5) {
-      assert.equal(answer.data.question.ordinal, ordinal + 1);
-      assert.equal(answer.data.question.seconds_remaining, 30);
+      assert.equal(answer.data.next_challenge, true);
+      current = await request("/api/participant/current", { cookie: participantCookie });
+      assert.equal(current.data.question.ordinal, ordinal + 1);
+      assert.equal(current.data.question.seconds_remaining, 30);
     } else {
       assert.equal(answer.data.session_ended, true);
       assert.equal(answer.data.completion.level_name, "FINAL DIRECTIVE");
@@ -335,7 +358,13 @@ test("server stores and evaluates a complete participant session, with private a
 
   const detail = await request(`/api/admin/participants/${participantId}`, { cookie: adminCookie });
   assert.equal(detail.response.status, 200);
-  assert.equal(detail.data.answers.length, 45);
+  assert.equal(detail.data.answers.length, 31);
+  assert.equal(detail.data.assigned_challenges["1"].length, 10);
+  assert.equal(detail.data.assigned_challenges["2"].length, 10);
+  assert.equal(detail.data.assigned_challenges["3"].length, 5);
+  assert.equal(detail.data.assigned_challenges["4"].length, 1);
+  assert.equal(detail.data.assigned_challenges["5"].length, 5);
+  assert.deepEqual(detail.data.assigned_challenges["1"].map((challenge) => challenge.id), initialChallengeIds);
   assert.equal(detail.data.answers.at(-1).is_correct, false);
   assert.equal(detail.data.answers.at(-1).submitted_answer, null);
   assert.equal(detail.data.events[0].event_type, "page_hide");
@@ -374,20 +403,11 @@ test("server stores and evaluates a complete participant session, with private a
     const outcomeId = outcomeRegistration.data.participant_id;
     let outcome;
     for (let level = 1; level <= targetLevel; level += 1) {
-      const questions = QUESTIONS.filter((question) => question.level === level);
-      const successesRequired = level === targetLevel ? requiredScore / 10 : questions.length;
-      for (const [index, question] of questions.entries()) {
-        const submittedAnswer = index < successesRequired
-          ? question.expected_answer
-          : question.expected_answer === "0" ? "1" : "NOT_THE_ANSWER";
-        outcome = await request("/api/participant/answer", {
-          method: "POST",
-          cookie: outcomeCookie,
-          body: { question_id: question.id, answer: submittedAnswer }
-        });
-        assertNoParticipantEvaluation(outcome.data);
-        assert.equal(outcome.response.status, 200);
-      }
+      const ids = assignedChallengeIds(outcomeId, level);
+      const pointsPerChallenge = getChallenge(ids[0]).points;
+      const successfulAnswers = level === targetLevel ? requiredScore / pointsPerChallenge : ids.length;
+      assert.equal(Number.isInteger(successfulAnswers), true);
+      outcome = await submitAssignedLevel(outcomeCookie, outcomeId, level, successfulAnswers);
       if (level < targetLevel) {
         assert.equal(outcome.data.level_complete, true);
         assert.equal(outcome.data.completion.level, level);
@@ -437,12 +457,27 @@ test("server stores and evaluates a complete participant session, with private a
     }
   };
 
+  const passingScores = [50, 60, 80, 100];
+  const failingScores = [40, 50, 60, 0];
   for (let level = 1; level <= 4; level += 1) {
-    await assertLevelOutcome(level, qualificationThresholds[level - 1], true);
+    await assertLevelOutcome(level, passingScores[level - 1], true);
+    await assertLevelOutcome(level, failingScores[level - 1], false);
   }
-  for (let failedLevel = 1; failedLevel <= 4; failedLevel += 1) {
-    await assertLevelOutcome(failedLevel, qualificationThresholds[failedLevel - 1] - 10, false);
+
+  const legacyTimestamp = Date.now() - 1000;
+  server.database.prepare(`
+    UPDATE participants
+    SET challenge_assignments = '{}', question_index = 0, current_level = 1, awaiting_level = NULL
+    WHERE id = ?
+  `).run(secondRegistration.data.participant_id);
+  for (const [index, legacyId] of ["LEGACY-L1-01", "LEGACY-L1-02"].entries()) {
+    server.database.prepare(`
+      INSERT INTO answers (participant_id, question_id, level, question_ordinal, submitted_answer, is_correct, points_awarded, answered_at)
+      VALUES (?, ?, 1, ?, 'old response', 0, 0, ?)
+    `).run(secondRegistration.data.participant_id, legacyId, index + 1, legacyTimestamp + index);
   }
+  server.database.prepare("UPDATE participants SET question_index = 2 WHERE id = ?")
+    .run(secondRegistration.data.participant_id);
 
   await stopServer();
   await startServer();
@@ -452,6 +487,11 @@ test("server stores and evaluates a complete participant session, with private a
   assert.equal(persistedParticipantSession.data.session_ended, true);
   const persistedSecondSession = await request("/api/participant/current", { cookie: secondParticipantCookie });
   assert.equal(persistedSecondSession.data.level, 1);
+  assert.equal(persistedSecondSession.data.question_index, 2);
+  assert.equal(persistedSecondSession.data.question.id, assignedChallengeIds(secondRegistration.data.participant_id, 1)[2]);
+  for (let level = 1; level <= 5; level += 1) {
+    assert.equal(assignedChallengeIds(secondRegistration.data.participant_id, level).length, LEVEL_QUESTION_COUNTS[level - 1]);
+  }
   const logout = await request("/api/admin/logout", { method: "POST", body: {}, cookie: adminCookie });
   assert.equal(logout.response.status, 200);
   const endedAdminSession = await request("/api/admin/session", { cookie: adminCookie });

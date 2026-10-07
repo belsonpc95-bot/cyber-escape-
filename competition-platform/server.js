@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { LEVEL_NAMES, LEVEL_QUESTION_COUNTS, QUESTIONS, QUALIFYING_SCORES } from "./server/questions.js";
+import { assignChallenges, getChallenge, LEVEL_NAMES, LEVEL_QUESTION_COUNTS, QUALIFYING_SCORES } from "./server/questions.js";
 
 const PARTICIPANT_COOKIE = "cyber_participant";
 const ADMIN_COOKIE = "cyber_admin";
@@ -57,6 +57,7 @@ function createDatabase(databasePath) {
       question_index INTEGER NOT NULL DEFAULT 0,
       current_level INTEGER NOT NULL DEFAULT 1,
       awaiting_level INTEGER,
+      challenge_assignments TEXT NOT NULL DEFAULT '{}',
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'eliminated', 'completed')),
       level1_score INTEGER NOT NULL DEFAULT 0,
       level2_score INTEGER NOT NULL DEFAULT 0,
@@ -112,6 +113,10 @@ function createDatabase(databasePath) {
   if (!participantColumns.includes("awaiting_level")) {
     db.exec("ALTER TABLE participants ADD COLUMN awaiting_level INTEGER");
   }
+  if (!participantColumns.includes("challenge_assignments")) {
+    db.exec("ALTER TABLE participants ADD COLUMN challenge_assignments TEXT NOT NULL DEFAULT '{}'");
+  }
+  backfillChallengeAssignments(db);
   return db;
 }
 
@@ -132,6 +137,90 @@ function serializeParticipant(row) {
 
 function normalizeAnswer(answer) {
   return String(answer ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function backfillChallengeAssignments(db) {
+  const participants = db.prepare("SELECT * FROM participants ORDER BY created_at, id").all();
+  const usedAssignments = Array.from({ length: 5 }, (_, index) => participants.flatMap((row) => {
+    const ids = JSON.parse(row.challenge_assignments || "{}")[String(index + 1)];
+    return Array.isArray(ids) && ids.length === LEVEL_QUESTION_COUNTS[index] &&
+      ids.every((id) => getChallenge(id)?.level === index + 1) && new Set(ids).size === ids.length
+      ? [ids]
+      : [];
+  }));
+  const answerCounts = db.prepare(`
+    SELECT level, COUNT(*) AS count
+    FROM answers
+    WHERE participant_id = ?
+    GROUP BY level
+  `);
+  const update = db.prepare(`
+    UPDATE participants
+    SET challenge_assignments = ?, question_index = ?, awaiting_level = ?, status = ?,
+      level1_qualified = ?, level2_qualified = ?, level3_qualified = ?, level4_qualified = ?,
+      question_started_at = ?, level5_completed_at = ?, updated_at = ?, revision = ?
+    WHERE id = ?
+  `);
+
+  for (const participant of participants) {
+    const assignments = JSON.parse(participant.challenge_assignments || "{}");
+    const validAssignment = (level, ids) =>
+      Array.isArray(ids) &&
+      ids.length === LEVEL_QUESTION_COUNTS[level - 1] &&
+      ids.every((id) => getChallenge(id)?.level === level) &&
+      new Set(ids).size === ids.length;
+    let changed = false;
+    for (let level = 1; level <= 5; level += 1) {
+      if (!validAssignment(level, assignments[String(level)])) {
+        assignments[String(level)] = assignChallenges(level, usedAssignments[level - 1]);
+        usedAssignments[level - 1].push(assignments[String(level)]);
+        changed = true;
+      }
+    }
+    if (!changed) continue;
+
+    let questionIndex = participant.question_index;
+    let awaitingLevel = participant.awaiting_level;
+    let status = participant.status;
+    let qualified = [1, 2, 3, 4].map((level) => Number(participant[`level${level}_qualified`]));
+    let questionStartedAt = participant.question_started_at;
+    let level5CompletedAt = participant.level5_completed_at;
+    if (status === "active" && awaitingLevel === null) {
+      const answeredCount = answerCounts.all(participant.id).find((row) => row.level === participant.current_level)?.count || 0;
+      const levelCount = LEVEL_QUESTION_COUNTS[participant.current_level - 1];
+      if (answeredCount >= levelCount) {
+        questionIndex = levelCount;
+        if (participant.current_level === 5) {
+          status = "completed";
+          level5CompletedAt ||= participant.updated_at;
+          questionStartedAt = null;
+        } else {
+          const levelScore = participant[`level${participant.current_level}_score`];
+          const passed = levelScore >= QUALIFYING_SCORES[participant.current_level - 1];
+          qualified[participant.current_level - 1] = Number(passed);
+          status = passed ? "active" : "eliminated";
+          awaitingLevel = passed ? participant.current_level + 1 : null;
+        }
+      } else {
+        questionIndex = answeredCount;
+        if (participant.current_level === 5) questionStartedAt = null;
+      }
+    }
+    const now = Date.now();
+    const revision = db.prepare("UPDATE app_meta SET value = value + 1 WHERE key = 'revision' RETURNING value").get().value;
+    update.run(
+      JSON.stringify(assignments),
+      questionIndex,
+      awaitingLevel,
+      status,
+      ...qualified,
+      questionStartedAt,
+      level5CompletedAt,
+      now,
+      revision,
+      participant.id
+    );
+  }
 }
 
 function validateProfile(profile) {
@@ -276,6 +365,16 @@ export function createCompetitionServer({
   const getParticipant = db.prepare("SELECT * FROM participants WHERE id = ?");
   const nextRevision = () => db.prepare("UPDATE app_meta SET value = value + 1 WHERE key = 'revision' RETURNING value").get().value;
   const adminStreams = new Set();
+  const assignChallengeSet = (level) => {
+    const usedSets = db.prepare("SELECT challenge_assignments FROM participants").all().flatMap(({ challenge_assignments }) => {
+      const ids = JSON.parse(challenge_assignments || "{}")[String(level)];
+      return Array.isArray(ids) && ids.length === LEVEL_QUESTION_COUNTS[level - 1] &&
+        ids.every((id) => getChallenge(id)?.level === level) && new Set(ids).size === ids.length
+        ? [ids]
+        : [];
+    });
+    return assignChallenges(level, usedSets);
+  };
 
   const levelCompletion = (participant, level, qualified) => ({
     level,
@@ -308,8 +407,10 @@ export function createCompetitionServer({
         completion: levelCompletion(participant, 5, true)
       };
     }
-    const question = QUESTIONS[participant.question_index];
-    if (!question) return { participant_id: participant.id, completed: true };
+    const assignment = JSON.parse(participant.challenge_assignments || "{}");
+    const challengeId = assignment[String(participant.current_level)]?.[participant.question_index];
+    const question = getChallenge(challengeId);
+    if (!question) throw new Error(`Active challenge assignment is missing for participant ${participant.id}.`);
 
     if (question.level === 5 && participant.question_started_at === null) {
       const now = Date.now();
@@ -320,7 +421,7 @@ export function createCompetitionServer({
             level5_started_at = CASE WHEN ? = 1 AND level5_started_at IS NULL THEN ? ELSE level5_started_at END,
             updated_at = ?, revision = ?
         WHERE id = ? AND question_started_at IS NULL
-      `).run(now, question.ordinal, now, now, revision, participant.id);
+      `).run(now, participant.question_index + 1, now, now, revision, participant.id);
       participant = getParticipant.get(participant.id);
       broadcastAdminUpdates();
     }
@@ -328,13 +429,12 @@ export function createCompetitionServer({
     const responseQuestion = {
       id: question.id,
       level: question.level,
-      ordinal: question.ordinal,
+      ordinal: participant.question_index + 1,
       prompt: question.prompt,
-      options: question.options,
-      cipher_key: question.cipher_key,
-      plaintext: question.plaintext,
-      display_signal: question.display_signal,
-      source_code: question.source_code,
+      terminal: question.terminal,
+      artifact: question.artifact,
+      input_label: question.input_label,
+      placeholder: question.placeholder,
       level_name: LEVEL_NAMES[question.level - 1]
     };
     if (question.level === 5) {
@@ -345,7 +445,7 @@ export function createCompetitionServer({
       participant_id: participant.id,
       question: responseQuestion,
       level: question.level,
-      question_index: question.ordinal - 1,
+      question_index: participant.question_index,
       level_question_count: LEVEL_QUESTION_COUNTS[question.level - 1]
     };
   };
@@ -460,10 +560,11 @@ export function createCompetitionServer({
       const id = randomBytes(16).toString("hex");
       const now = Date.now();
       const revision = nextRevision();
+      const challengeAssignments = JSON.stringify({ "1": assignChallengeSet(1) });
       db.prepare(`
-        INSERT INTO participants (id, full_name, college, email, phone, year, department, created_at, updated_at, revision)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, profile.full_name, profile.college, profile.email, profile.phone, profile.year, profile.department, now, now, revision);
+        INSERT INTO participants (id, full_name, college, email, phone, year, department, challenge_assignments, created_at, updated_at, revision)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, profile.full_name, profile.college, profile.email, profile.phone, profile.year, profile.department, challengeAssignments, now, now, revision);
       const token = randomBytes(32).toString("base64url");
       createSession(db, "participant_sessions", token, id, now + PARTICIPANT_SESSION_MS);
       setCookie(response, PARTICIPANT_COOKIE, token, { secure: secureCookies, maxAge: PARTICIPANT_SESSION_MS });
@@ -482,12 +583,14 @@ export function createCompetitionServer({
         throw new HttpError(409, "There is no qualified level waiting to advance.");
       }
       const nextLevel = participant.awaiting_level;
+      const challengeAssignments = JSON.parse(participant.challenge_assignments || "{}");
+      challengeAssignments[String(nextLevel)] = assignChallengeSet(nextLevel);
       const revision = nextRevision();
       db.prepare(`
         UPDATE participants
-        SET current_level = ?, awaiting_level = NULL, updated_at = ?, revision = ?
+        SET current_level = ?, question_index = 0, awaiting_level = NULL, challenge_assignments = ?, updated_at = ?, revision = ?
         WHERE id = ? AND status = 'active' AND awaiting_level = ?
-      `).run(nextLevel, Date.now(), revision, participant.id, nextLevel);
+      `).run(nextLevel, JSON.stringify(challengeAssignments), Date.now(), revision, participant.id, nextLevel);
       broadcastAdminUpdates();
       return sendJson(response, 200, publicQuestion(getParticipant.get(participant.id)));
     }
@@ -499,7 +602,8 @@ export function createCompetitionServer({
       if (participant.awaiting_level !== null) {
         throw new HttpError(409, "Advance to the next level before submitting another answer.");
       }
-      const question = QUESTIONS[participant.question_index];
+      const challengeAssignments = JSON.parse(participant.challenge_assignments || "{}");
+      const question = getChallenge(challengeAssignments[String(participant.current_level)]?.[participant.question_index]);
       if (!question || payload.question_id !== question.id) {
         throw new HttpError(409, "This question is no longer active.");
       }
@@ -514,8 +618,9 @@ export function createCompetitionServer({
       const correct = !timedOut && normalizeAnswer(submitted) === normalizeAnswer(question.expected_answer);
       const awarded = correct ? question.points : 0;
       const levelScoreKey = `level${question.level}_score`;
-      const newScore = participant[levelScoreKey] + awarded;
-      const levelComplete = question.ordinal === LEVEL_QUESTION_COUNTS[question.level - 1];
+      const newScore = Math.min(100, participant[levelScoreKey] + awarded);
+      const ordinal = participant.question_index + 1;
+      const levelComplete = ordinal === LEVEL_QUESTION_COUNTS[question.level - 1];
       const qualified = question.level === 5 || (levelComplete && newScore >= QUALIFYING_SCORES[question.level - 1]);
       const eliminated = levelComplete && question.level < 5 && !qualified;
       const completed = question.level === 5 && levelComplete;
@@ -527,7 +632,7 @@ export function createCompetitionServer({
         db.prepare(`
           INSERT INTO answers (participant_id, question_id, level, question_ordinal, submitted_answer, is_correct, points_awarded, answered_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(participant.id, question.id, question.level, question.ordinal, submitted, Number(correct), awarded, now);
+        `).run(participant.id, question.id, question.level, ordinal, submitted, Number(correct), awarded, now);
         if (question.level < 5 && levelComplete) {
           db.prepare(`
             UPDATE participants
@@ -545,7 +650,6 @@ export function createCompetitionServer({
               participant.id
             );
         } else if (question.level === 5) {
-          const nextQuestion = !completed;
           db.prepare(`
             UPDATE participants
             SET level5_score = ?, question_index = ?, question_started_at = ?,
@@ -554,7 +658,7 @@ export function createCompetitionServer({
           `).run(
             newScore,
             nextIndex,
-            nextQuestion ? now : null,
+            null,
             completed ? now : null,
             completed ? "completed" : "active",
             now,
@@ -581,10 +685,21 @@ export function createCompetitionServer({
           accepted: true,
           level_complete: true,
           session_ended: eliminated || completed,
-          completion: levelCompletion(updatedParticipant, question.level, qualified)
+          completion: levelCompletion(updatedParticipant, question.level, qualified),
+          reaction: correct ? "breach" : "deflect"
         });
       }
-      return sendJson(response, 200, publicQuestion(getParticipant.get(participant.id)));
+      if (question.level === 5) {
+        return sendJson(response, 200, {
+          accepted: true,
+          next_challenge: true,
+          reaction: correct ? "breach" : "deflect"
+        });
+      }
+      return sendJson(response, 200, {
+        ...publicQuestion(getParticipant.get(participant.id)),
+        reaction: correct ? "breach" : "deflect"
+      });
     }
 
     if (method === "POST" && path === "/api/participant/event") {
@@ -668,21 +783,38 @@ export function createCompetitionServer({
     if (detailsMatch) {
       requireAdmin(request);
       const participantId = detailsMatch[1];
-      if (!getParticipant.get(participantId)) throw new HttpError(404, "Participant was not found.");
+      const participant = getParticipant.get(participantId);
+      if (!participant) throw new HttpError(404, "Participant was not found.");
+      const assignments = JSON.parse(participant.challenge_assignments || "{}");
+      const assignedChallenges = Object.fromEntries(Object.entries(assignments).map(([level, ids]) => [
+        level,
+        ids.map((id, index) => {
+          const challenge = getChallenge(id);
+          if (!challenge) return { id, ordinal: index + 1, terminal: "ARCHIVED CHALLENGE", prompt: "Challenge content is unavailable.", artifact: "" };
+          return {
+            id: challenge.id,
+            ordinal: index + 1,
+            terminal: challenge.terminal,
+            prompt: challenge.prompt,
+            artifact: challenge.artifact,
+            points: challenge.points
+          };
+        })
+      ]));
       const answers = db.prepare(`
-        SELECT level, question_ordinal, submitted_answer, is_correct, points_awarded, answered_at
+        SELECT question_id, level, question_ordinal, submitted_answer, is_correct, points_awarded, answered_at
         FROM answers WHERE participant_id = ? ORDER BY answered_at
       `).all(participantId).map((answer) => ({
         ...answer,
         is_correct: Boolean(answer.is_correct),
-        question: QUESTIONS.find((question) => question.level === answer.level && question.ordinal === answer.question_ordinal)?.prompt || "",
+        question: getChallenge(answer.question_id)?.prompt || "Archived challenge",
         answered_at: new Date(answer.answered_at).toISOString()
       }));
       const events = db.prepare(`
         SELECT event_type, occurred_at FROM events
         WHERE participant_id = ? ORDER BY id DESC LIMIT 100
       `).all(participantId).map((event) => ({ ...event, occurred_at: new Date(event.occurred_at).toISOString() }));
-      return sendJson(response, 200, { answers, events });
+      return sendJson(response, 200, { assigned_challenges: assignedChallenges, answers, events });
     }
 
     throw new HttpError(404, "API route not found.");
