@@ -29,6 +29,7 @@ let timerHandle = null;
 let activityCleanup = null;
 let adminRows = new Map();
 let adminEvents = [];
+const adminFilters = { search: "", college: "", department: "", year: "", status: "", sort: "newest" };
 let participantDetailCache = new Map();
 let participantDetailLoads = new Set();
 let selectedParticipant = null;
@@ -73,6 +74,8 @@ function showView(markup, stage = 0) {
       else if (action === "advance-level") advanceLevel(control);
       else if (action === "return") location.assign("./");
       else if (action === "details") showParticipantDetails(control.dataset.id);
+      else if (action === "export-results") exportAdminCsv("results");
+      else if (action === "export-answers") exportAdminCsv("answers");
       else if (action === "details-close") {
         selectedParticipant = null;
         renderAdminDashboard();
@@ -86,6 +89,17 @@ function showView(markup, stage = 0) {
       if (form.dataset.form === "register") await registerParticipant();
       if (form.dataset.form === "admin-login") await loginAdmin();
       if (form.dataset.form === "answer") await submitTextAnswer();
+    });
+  });
+  const participantSearch = app.querySelector("#participant-search");
+  participantSearch?.addEventListener("input", () => {
+    adminFilters.search = participantSearch.value;
+    updateAdminParticipantTable();
+  });
+  app.querySelectorAll("[data-admin-filter]").forEach((control) => {
+    control.addEventListener("change", () => {
+      adminFilters[control.dataset.adminFilter] = control.value;
+      renderAdminDashboard();
     });
   });
 }
@@ -119,8 +133,8 @@ function publicQuestionMarkup(question) {
     : question.level === 5
       ? `<div class="tool-string" aria-label="Captured signal">${escapeHtml(question.artifact)}</div>`
       : `<div class="mission-artifact"><div class="artifact-heading"><span class="live-dot"></span>${escapeHtml(question.terminal || "EVIDENCE CONSOLE")}</div><pre>${escapeHtml(question.artifact || "")}</pre></div>`;
-  const attempts = question.level === 1
-    ? `<div class="attempt-counter">PASSWORD ATTEMPTS REMAINING <strong id="attempt-count">${question.attempts_remaining}</strong> / 2</div>`
+  const attempts = Number.isInteger(question.attempt_limit)
+    ? `<div class="attempt-counter">ATTEMPTS REMAINING <strong id="attempt-count">${question.attempts_remaining}</strong> / ${question.attempt_limit}</div>`
     : "";
   return `<p class="mission-objective">${escapeHtml(question.prompt)}</p>
     ${artifact}
@@ -173,21 +187,29 @@ function playMissionReaction(reaction) {
 
 function renderLevelCompletion(completion) {
   const level = Number(completion.level);
-  const qualified = Boolean(completion.qualified);
   const finalLevel = level === 5;
-  const title = finalLevel ? "FINAL DIRECTIVE COMPLETE" : `LEVEL 0${level} COMPLETE`;
-  const status = finalLevel ? "MISSION COMPLETE" : qualified ? "QUALIFIED" : "NOT QUALIFIED";
+  const qualified = finalLevel ? Boolean(completion.final_qualified) : Boolean(completion.qualified);
+  const title = finalLevel ? "MISSION COMPLETE" : `LEVEL ${level} COMPLETE`;
+  const status = qualified ? "QUALIFIED" : "NOT QUALIFIED";
   const action = qualified && !finalLevel
     ? `<div class="next-gate">NEXT: ${escapeHtml(completion.next_level)}</div><button type="button" class="button next-level-button" data-action="advance-level">NEXT LEVEL <span aria-hidden="true">↗</span></button>`
     : finalLevel
-      ? `<p class="completion-recorded">Your results have been securely recorded.</p><div class="completion-waiting">MISSION ARCHIVE SEALED · RESULTS RECORDED</div><button type="button" class="button secondary" data-action="return">Return to portal</button>`
+      ? `<p class="completion-recorded">Your results have been securely recorded.</p><button type="button" class="button secondary" data-action="return">Return to portal</button>`
       : `<p class="completion-recorded">Your game session has ended. The next level remains locked.</p>`;
+  const review = completion.answer_review?.length
+    ? `<section class="answer-review"><div class="eyebrow">WRONG-ANSWER REVIEW</div>${completion.answer_review.map((answer) => `<article class="review-entry"><h3>CHALLENGE ${String(answer.ordinal).padStart(2, "0")} · ${escapeHtml(answer.terminal)}</h3><dl><div><dt>Your answer</dt><dd>${escapeHtml(answer.participant_answer || "No response")}</dd></div><div><dt>Correct answer</dt><dd>${escapeHtml(answer.correct_answer)}</dd></div></dl></article>`).join("")}</section>`
+    : `<section class="answer-review"><div class="eyebrow">WRONG-ANSWER REVIEW</div><p class="muted">All challenge responses were correct. No corrections required.</p></section>`;
+  const scoreBreakdown = finalLevel
+    ? `<section class="final-score-breakdown"><div class="eyebrow">FINAL SCORE ARCHIVE</div>${completion.scores.map((score) => `<div class="final-score-row"><span>LEVEL ${score.level} SCORE · ${escapeHtml(score.level_name)}</span><strong>${Number(score.score)}/100</strong></div>`).join("")}<div class="final-score-row overall-score"><span>OVERALL SCORE</span><strong>${Number(completion.total_score)}/500</strong></div><div class="final-score-row overall-percentage"><span>OVERALL PERCENTAGE</span><strong>${Number(completion.overall_percentage)}%</strong></div><div class="qualification-status">${qualified ? "QUALIFIED" : "NOT QUALIFIED"}</div></section>`
+    : "";
   showView(`<section class="level-completion animate-in ${qualified ? "completion-qualified" : "completion-failed"}">
-    <div class="completion-kicker eyebrow">${finalLevel ? "FINAL TRANSMISSION" : "SECURITY GATE CLEARED"}</div>
+    <div class="completion-kicker eyebrow">${finalLevel ? "FINAL TRANSMISSION" : "LEVEL COMPLETION"}</div>
     <h1>${escapeHtml(title)}</h1>
     <div class="completion-name">${escapeHtml(completion.level_name)}</div>
-    <div class="hologram-score"><span>${finalLevel ? "LEVEL 5 SCORE" : "LEVEL SCORE"}</span><strong>${Number(completion.score)}<i>/100</i></strong></div>
-    <div class="qualification-status">${escapeHtml(status)}</div>
+    ${finalLevel ? "" : `<div class="hologram-score"><span>LEVEL ${level} SCORE</span><strong>${Number(completion.score)}<i>/100</i></strong></div>`}
+    ${finalLevel ? "" : `<div class="qualification-status">${escapeHtml(status)}</div>`}
+    ${scoreBreakdown}
+    ${review}
     ${action}
   </section>`, level - 1);
 }
@@ -252,7 +274,9 @@ async function submitAnswer(answer) {
         field.focus();
       }
       buttons.forEach((button) => { button.disabled = false; });
-      window.setTimeout(() => startQuestionTimer(result.seconds_remaining), 0);
+      if (Number.isInteger(result.seconds_remaining)) {
+        window.setTimeout(() => startQuestionTimer(result.seconds_remaining), 0);
+      }
       return;
     }
     if (result.completion) renderLevelCompletion(result.completion);
@@ -491,14 +515,75 @@ function renderFinalStandings(ranked) {
   return `<section class="panel final-results"><div class="eyebrow">MISSION COMPLETE · FINALISTS ONLY</div><h2>🏆 CYBER ESCAPE ROOM CHAMPION</h2><div class="champion-card"><strong>${winnerNames}</strong><span>${(participantTotal(winner) / 5).toFixed(1)}% overall · ${participantTotal(winner)}/500</span>${jointWinners.length > 1 ? `<span class="muted">Joint winner · all listed tie-breakers are equal</span>` : ""}</div><div class="podium">${podium}</div><div class="table-scroll"><table><thead><tr><th>Place</th><th>Finalist</th><th>College</th><th>L1</th><th>L2</th><th>L3</th><th>L4</th><th>L5</th><th>Total</th><th>Overall %</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 
-function renderAdminDashboard() {
-  const ranked = rankParticipants([...adminRows.values()]);
-  const rows = ranked.map((person, index) => {
+function filteredAdminParticipants() {
+  const search = adminFilters.search.trim().toLocaleLowerCase();
+  const filtered = [...adminRows.values()].filter((person) => {
+    const searchable = [person.full_name, person.email, person.phone, person.college, person.department, person.year]
+      .join(" ").toLocaleLowerCase();
+    return (!search || searchable.includes(search)) &&
+      (!adminFilters.college || person.college === adminFilters.college) &&
+      (!adminFilters.department || person.department === adminFilters.department) &&
+      (!adminFilters.year || person.year === adminFilters.year) &&
+      (!adminFilters.status || person.status === adminFilters.status);
+  });
+  const sorters = {
+    newest: (a, b) => new Date(b.created_at) - new Date(a.created_at),
+    oldest: (a, b) => new Date(a.created_at) - new Date(b.created_at),
+    highest: (a, b) => compareFinalists(a, b),
+    lowest: (a, b) => compareFinalists(b, a),
+    name: (a, b) => a.full_name.localeCompare(b.full_name)
+  };
+  return filtered.sort(sorters[adminFilters.sort] || sorters.newest);
+}
+
+function adminParticipantRows(people) {
+  return people.map((person, index) => {
     const total = participantTotal(person);
     const percent = (total / 500 * 100).toFixed(1);
     const qualifications = [1, 2, 3, 4].map((level) => person[`level${level}_qualified`] ? "✓" : "—").join(" ");
     return `<tr><td>${index + 1}</td><td><button class="table-link" type="button" data-action="details" data-id="${escapeHtml(person.id)}">${escapeHtml(person.full_name)}</button></td><td>${escapeHtml(person.college)}</td><td>${escapeHtml(person.email)}</td><td>${escapeHtml(person.phone)}</td><td>${escapeHtml(person.year)} · ${escapeHtml(person.department)}</td><td>${person.current_level}/5</td><td>${escapeHtml(person.status)} · ${qualifications}</td>${[1, 2, 3, 4, 5].map((level) => `<td>${Number(person[`level${level}_score`] || 0)}</td>`).join("")}<td>${total}/500</td><td>${percent}%</td><td>${escapeHtml(new Date(person.created_at).toLocaleString())}</td></tr>`;
   }).join("");
+}
+
+function updateAdminParticipantTable() {
+  const people = filteredAdminParticipants();
+  const tbody = app.querySelector("#participant-table-body");
+  if (!tbody) return;
+  tbody.innerHTML = adminParticipantRows(people) || `<tr><td colspan="16" class="empty-row">No participants match these filters.</td></tr>`;
+  const count = app.querySelector("#participant-count");
+  if (count) count.textContent = `Showing ${people.length} of ${adminRows.size} participants`;
+}
+
+async function exportAdminCsv(type) {
+  const query = new URLSearchParams({ type, ...adminFilters });
+  try {
+    const response = await fetch(`/api/admin/export?${query}`, { credentials: "same-origin" });
+    if (!response.ok) {
+      let message = "The competition server could not export this report.";
+      try {
+        message = (await response.json()).error || message;
+      } catch {}
+      throw new Error(message);
+    }
+    const file = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = file;
+    link.download = type === "answers" ? "cyber-escape-detailed-answers.csv" : "cyber-escape-results.csv";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(file);
+  } catch (error) {
+    notify(messageFor(error));
+  }
+}
+
+function renderAdminDashboard() {
+  const ranked = rankParticipants([...adminRows.values()]);
+  const colleges = [...new Set(ranked.map((person) => person.college))].sort((a, b) => a.localeCompare(b));
+  const departments = [...new Set(ranked.map((person) => person.department))].sort((a, b) => a.localeCompare(b));
+  const years = [...new Set(ranked.map((person) => person.year))].sort((a, b) => a.localeCompare(b));
+  const selectOptions = (values, selected, allLabel) => `<option value="">${allLabel}</option>${values.map((value) => `<option value="${escapeHtml(value)}"${selected === value ? " selected" : ""}>${escapeHtml(value)}</option>`).join("")}`;
   const events = adminEvents.slice(0, 20).map((item) => {
     const participantName = adminRows.get(item.participant_id)?.full_name || "Participant";
     return `<li><strong>${escapeHtml(item.event_type.replaceAll("_", " "))}</strong> · ${escapeHtml(participantName)} · ${escapeHtml(new Date(item.occurred_at).toLocaleString())}</li>`;
@@ -509,7 +594,22 @@ function renderAdminDashboard() {
     <div class="admin-telemetry"><div class="panel telemetry-card"><span>PARTICIPANTS</span><strong>${ranked.length}</strong></div><div class="panel telemetry-card"><span>ACTIVE SESSIONS</span><strong>${ranked.filter((p) => p.status === "active").length}</strong></div><div class="panel telemetry-card"><span>FINALISTS</span><strong>${ranked.filter(isFinalist).length}</strong></div><div class="panel telemetry-card"><span>SERVER UPDATES</span><strong class="connection-${realtimeState.toLowerCase()}">${escapeHtml(realtimeState)}</strong></div></div>
     ${renderFinalStandings(ranked)}
     <section class="panel table-panel"><div class="table-heading"><div><div class="eyebrow">GLOBAL PARTICIPANT REGISTER</div><h2>Competition ledger</h2></div><span class="mono muted">LIVE CENTRAL SERVER STREAM</span></div>
-      <div class="table-scroll"><table><thead><tr><th>#</th><th>Participant</th><th>College</th><th>Email</th><th>Phone</th><th>Year · Department</th><th>Level</th><th>Status · Qualification</th><th>L1</th><th>L2</th><th>L3</th><th>L4</th><th>L5</th><th>Total</th><th>%</th><th>Registered</th></tr></thead><tbody>${rows || `<tr><td colspan="16" class="empty-row">No participants registered yet.</td></tr>`}</tbody></table></div>
+      <div class="participant-filters">
+        <input id="participant-search" type="search" placeholder="Search participants..." value="${escapeHtml(adminFilters.search)}" aria-label="Search participants">
+        <select data-admin-filter="college" aria-label="Filter by college">${selectOptions(colleges, adminFilters.college, "All colleges")}</select>
+        <select data-admin-filter="department" aria-label="Filter by department">${selectOptions(departments, adminFilters.department, "All departments")}</select>
+        <select data-admin-filter="year" aria-label="Filter by year">${selectOptions(years, adminFilters.year, "All years")}</select>
+        <select data-admin-filter="status" aria-label="Filter by status">${selectOptions(["active", "eliminated", "completed"], adminFilters.status, "All statuses")}</select>
+        <select data-admin-filter="sort" aria-label="Sort participants">
+          <option value="newest"${adminFilters.sort === "newest" ? " selected" : ""}>Newest first</option>
+          <option value="oldest"${adminFilters.sort === "oldest" ? " selected" : ""}>Oldest first</option>
+          <option value="highest"${adminFilters.sort === "highest" ? " selected" : ""}>Highest score</option>
+          <option value="lowest"${adminFilters.sort === "lowest" ? " selected" : ""}>Lowest score</option>
+          <option value="name"${adminFilters.sort === "name" ? " selected" : ""}>Name A–Z</option>
+        </select>
+      </div>
+      <div class="participant-export"><button class="button" type="button" data-action="export-results">Export results CSV</button><button class="button secondary" type="button" data-action="export-answers">Export detailed answers CSV</button><span id="participant-count" class="mono muted">Showing ${filteredAdminParticipants().length} of ${adminRows.size} participants</span></div>
+      <div class="table-scroll"><table><thead><tr><th>#</th><th>Participant</th><th>College</th><th>Email</th><th>Phone</th><th>Year · Department</th><th>Level</th><th>Status · Qualification</th><th>L1</th><th>L2</th><th>L3</th><th>L4</th><th>L5</th><th>Total</th><th>%</th><th>Registered</th></tr></thead><tbody id="participant-table-body">${adminParticipantRows(filteredAdminParticipants()) || `<tr><td colspan="16" class="empty-row">No participants match these filters.</td></tr>`}</tbody></table></div>
     </section>
     <section class="panel activity-panel"><div class="eyebrow">PRIVATE PROCTORING TELEMETRY</div><h2>Activity events</h2><ul>${events || `<li class="muted">No monitoring events received.</li>`}</ul></section>${details}
   </section>`, 0);
@@ -663,10 +763,10 @@ async function loadParticipantDetails(id) {
   const target = document.querySelector("#participant-details");
   if (!target) return;
   const assigned = Object.entries(result.assigned_challenges).map(([level, challenges]) =>
-    `<section class="assigned-level"><h4>LEVEL 0${level} · ${escapeHtml(LEVELS[Number(level) - 1].title)}</h4>${challenges.map((challenge) => `<details class="assigned-challenge"><summary>${String(challenge.ordinal).padStart(2, "0")} · ${escapeHtml(challenge.terminal)}</summary><p>${escapeHtml(challenge.prompt)}</p>${challenge.context ? `<p>${escapeHtml(challenge.context)}</p>` : ""}${challenge.clues?.length ? `<ul>${challenge.clues.map((clue) => `<li>${escapeHtml(clue)}</li>`).join("")}</ul>` : ""}<pre>${escapeHtml(challenge.artifact)}</pre></details>`).join("")}</section>`
+    `<section class="assigned-level"><h4>LEVEL 0${level} · ${escapeHtml(LEVELS[Number(level) - 1].title)}</h4>${challenges.map((challenge) => `<details class="assigned-challenge"><summary>${String(challenge.ordinal).padStart(2, "0")} · ${escapeHtml(challenge.terminal)}</summary><p>${escapeHtml(challenge.prompt)}</p>${challenge.context ? `<p>${escapeHtml(challenge.context)}</p>` : ""}${challenge.clues?.length ? `<ul>${challenge.clues.map((clue) => `<li>${escapeHtml(clue)}</li>`).join("")}</ul>` : ""}<pre>${escapeHtml(challenge.artifact)}</pre><p><strong>Correct answer:</strong> ${escapeHtml(challenge.expected_answer)}</p></details>`).join("")}</section>`
   ).join("");
   const attemptRows = result.attempts.map((attempt) => `<tr><td>${escapeHtml(attempt.question_id)}</td><td>${attempt.attempt_number}</td><td>${escapeHtml(attempt.submitted_answer || "No response")}</td><td>${attempt.is_correct ? "Correct" : "Incorrect"}</td><td>${escapeHtml(new Date(attempt.attempted_at).toLocaleString())}</td></tr>`).join("");
-  const markup = `<h3>Assigned mission challenges</h3><div class="assigned-challenge-list">${assigned}</div><h3>Recorded answers and evaluation</h3><div class="table-scroll"><table><thead><tr><th>Level</th><th>Challenge</th><th>Prompt</th><th>Answer</th><th>Evaluation</th><th>Points</th><th>Attempts</th><th>Submitted</th></tr></thead><tbody>${result.answers.map((answer) => `<tr><td>${answer.level}</td><td>${answer.question_ordinal}</td><td>${escapeHtml(answer.question)}</td><td>${escapeHtml(answer.submitted_answer || "Unanswered")}</td><td>${answer.is_correct ? "Correct" : "Incorrect"}</td><td>${answer.points_awarded}</td><td>${answer.attempts_used}</td><td>${escapeHtml(new Date(answer.answered_at).toLocaleString())}</td></tr>`).join("")}</tbody></table></div><h3>Answer attempts</h3><div class="table-scroll"><table><thead><tr><th>Challenge ID</th><th>Attempt</th><th>Submitted</th><th>Evaluation</th><th>Time</th></tr></thead><tbody>${attemptRows || `<tr><td colspan="5">No answers attempted.</td></tr>`}</tbody></table></div><h3>Monitoring events</h3><ul>${result.events.map((event) => `<li>${escapeHtml(event.event_type)} · ${escapeHtml(new Date(event.occurred_at).toLocaleString())}</li>`).join("") || "<li>No activity events.</li>"}</ul>`;
+  const markup = `<h3>Assigned mission challenges</h3><div class="assigned-challenge-list">${assigned}</div><h3>Recorded answers and evaluation</h3><div class="table-scroll"><table><thead><tr><th>Level</th><th>Challenge</th><th>Prompt</th><th>Participant answer</th><th>Correct answer</th><th>Evaluation</th><th>Points</th><th>Attempts</th><th>Submitted</th></tr></thead><tbody>${result.answers.map((answer) => `<tr><td>${answer.level}</td><td>${answer.question_ordinal}</td><td>${escapeHtml(answer.question)}</td><td>${escapeHtml(answer.submitted_answer || "Unanswered")}</td><td>${escapeHtml(answer.correct_answer || "Unavailable")}</td><td>${answer.is_correct ? "Correct" : "Incorrect"}</td><td>${answer.points_awarded}</td><td>${answer.attempts_used}</td><td>${escapeHtml(new Date(answer.answered_at).toLocaleString())}</td></tr>`).join("")}</tbody></table></div><h3>Answer attempts</h3><div class="table-scroll"><table><thead><tr><th>Challenge ID</th><th>Attempt</th><th>Submitted</th><th>Evaluation</th><th>Time</th></tr></thead><tbody>${attemptRows || `<tr><td colspan="5">No answers attempted.</td></tr>`}</tbody></table></div><h3>Monitoring events</h3><ul>${result.events.map((event) => `<li>${escapeHtml(event.event_type)} · ${escapeHtml(new Date(event.occurred_at).toLocaleString())}</li>`).join("") || "<li>No activity events.</li>"}</ul>`;
   participantDetailCache.set(id, markup);
   target.innerHTML = markup;
 }

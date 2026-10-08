@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { assignChallenges, getChallenge, LEVEL_NAMES, LEVEL_ONE_ATTEMPTS, LEVEL_ONE_QUESTION_MS, LEVEL_QUESTION_COUNTS, QUALIFYING_SCORES } from "./server/questions.js";
+import { assignChallenges, getChallenge, LEVEL_ATTEMPT_LIMITS, LEVEL_NAMES, LEVEL_ONE_QUESTION_MS, LEVEL_QUESTION_COUNTS, QUALIFYING_SCORES } from "./server/questions.js";
 
 const PARTICIPANT_COOKIE = "cyber_participant";
 const ADMIN_COOKIE = "cyber_admin";
@@ -95,6 +95,7 @@ function createDatabase(databasePath) {
       level INTEGER NOT NULL,
       question_ordinal INTEGER NOT NULL,
       submitted_answer TEXT,
+      correct_answer TEXT,
       is_correct INTEGER NOT NULL,
       points_awarded INTEGER NOT NULL,
       attempts_used INTEGER NOT NULL DEFAULT 1,
@@ -135,6 +136,15 @@ function createDatabase(databasePath) {
   const answerColumns = db.prepare("PRAGMA table_info(answers)").all().map((column) => column.name);
   if (!answerColumns.includes("attempts_used")) {
     db.exec("ALTER TABLE answers ADD COLUMN attempts_used INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!answerColumns.includes("correct_answer")) {
+    db.exec("ALTER TABLE answers ADD COLUMN correct_answer TEXT");
+  }
+  const answerRows = db.prepare("SELECT id, question_id FROM answers WHERE correct_answer IS NULL").all();
+  const updateCorrectAnswer = db.prepare("UPDATE answers SET correct_answer = ? WHERE id = ?");
+  for (const answer of answerRows) {
+    const challenge = getChallenge(answer.question_id);
+    if (challenge) updateCorrectAnswer.run(challenge.expected_answer, answer.id);
   }
   backfillChallengeAssignments(db);
   return db;
@@ -305,6 +315,22 @@ function sendJson(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
+function csvCell(value) {
+  let text = String(value ?? "");
+  if (/^[\u0000-\u0020]*[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function sendCsv(response, filename, columns, rows) {
+  const content = [columns, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+  response.writeHead(200, {
+    "Content-Type": "text/csv; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${filename}"`,
+    "Cache-Control": "no-store"
+  });
+  response.end(`\uFEFF${content}`);
+}
+
 async function readJson(request) {
   const contentType = request.headers["content-type"] || "";
   if (!contentType.toLowerCase().startsWith("application/json")) {
@@ -408,14 +434,40 @@ export function createCompetitionServer({
     return assignChallenges(level, usedSets);
   };
 
-  const levelCompletion = (participant, level, qualified) => ({
-    level,
-    level_name: LEVEL_NAMES[level - 1],
-    score: participant[`level${level}_score`],
-    qualified,
-    next_level: qualified && level < 5 ? LEVEL_NAMES[level] : null,
-    mission_complete: level === 5 && participant.status === "completed"
-  });
+  const levelCompletion = (participant, level, qualified) => {
+    const answers = db.prepare(`
+      SELECT question_id, question_ordinal, submitted_answer, correct_answer, is_correct
+      FROM answers WHERE participant_id = ? AND level = ? AND is_correct = 0
+      ORDER BY question_ordinal
+    `).all(participant.id, level);
+    const answer_review = answers.map((answer) => ({
+      challenge_id: answer.question_id,
+      ordinal: answer.question_ordinal,
+      participant_answer: answer.submitted_answer,
+      correct_answer: answer.correct_answer,
+      terminal: getChallenge(answer.question_id)?.terminal || "COMPLETED CHALLENGE"
+    }));
+    const completion = {
+      level,
+      level_name: LEVEL_NAMES[level - 1],
+      score: participant[`level${level}_score`],
+      qualified,
+      next_level: qualified && level < 5 ? LEVEL_NAMES[level] : null,
+      mission_complete: level === 5 && participant.status === "completed",
+      answer_review
+    };
+    if (level === 5) {
+      completion.scores = [1, 2, 3, 4, 5].map((scoreLevel) => ({
+        level: scoreLevel,
+        level_name: LEVEL_NAMES[scoreLevel - 1],
+        score: participant[`level${scoreLevel}_score`]
+      }));
+      completion.total_score = completion.scores.reduce((total, score) => total + score.score, 0);
+      completion.overall_percentage = Number((completion.total_score / 5).toFixed(1));
+      completion.final_qualified = [1, 2, 3, 4].every((scoreLevel) => Boolean(participant[`level${scoreLevel}_qualified`]));
+    }
+    return completion;
+  };
 
   const publicQuestion = (participant) => {
     if (participant.awaiting_level !== null) {
@@ -473,7 +525,10 @@ export function createCompetitionServer({
     if (question.level === 1) {
       const remaining = Math.max(0, LEVEL_ONE_QUESTION_MS - (Date.now() - participant.question_started_at));
       responseQuestion.seconds_remaining = Math.ceil(remaining / 1000);
-      responseQuestion.attempts_remaining = LEVEL_ONE_ATTEMPTS - participant.question_attempt_count;
+    }
+    if (LEVEL_ATTEMPT_LIMITS[question.level]) {
+      responseQuestion.attempt_limit = LEVEL_ATTEMPT_LIMITS[question.level];
+      responseQuestion.attempts_remaining = LEVEL_ATTEMPT_LIMITS[question.level] - participant.question_attempt_count;
     }
     if (question.level === 5) {
       const remaining = Math.max(0, LEVEL_FIVE_QUESTION_MS - (Date.now() - participant.question_started_at));
@@ -659,8 +714,9 @@ export function createCompetitionServer({
       }
       const submitted = timedOut ? null : String(payload.answer).trim().slice(0, 200);
       const correct = !timedOut && normalizeAnswer(submitted) === normalizeAnswer(question.expected_answer);
-      const attemptNumber = timedOut ? participant.question_attempt_count : participant.question_attempt_count + 1;
-      if (question.level === 1 && !correct && !timedOut && attemptNumber < LEVEL_ONE_ATTEMPTS) {
+      const attemptNumber = participant.question_attempt_count + 1;
+      const attemptLimit = LEVEL_ATTEMPT_LIMITS[question.level] ?? (question.level === 5 ? 1 : null);
+      if (attemptLimit && !correct && !timedOut && attemptNumber < attemptLimit) {
         const revision = nextRevision();
         db.exec("BEGIN IMMEDIATE");
         try {
@@ -681,10 +737,12 @@ export function createCompetitionServer({
         broadcastAdminUpdates();
         return sendJson(response, 200, {
           retry: true,
-          attempts_remaining: LEVEL_ONE_ATTEMPTS - attemptNumber,
-          hint: question.hint,
-          seconds_remaining: Math.max(0, Math.ceil((participant.question_started_at + LEVEL_ONE_QUESTION_MS - now) / 1000)),
-          reaction: "access_denied"
+          attempts_remaining: attemptLimit - attemptNumber,
+          hint: question.hint || "Recheck the evidence and try another interpretation.",
+          ...(question.level === 1 ? {
+            seconds_remaining: Math.max(0, Math.ceil((participant.question_started_at + LEVEL_ONE_QUESTION_MS - now) / 1000))
+          } : {}),
+          reaction: question.level === 1 ? "access_denied" : "deflect"
         });
       }
       const awarded = correct ? question.points : 0;
@@ -696,7 +754,7 @@ export function createCompetitionServer({
       const eliminated = levelComplete && question.level < 5 && !qualified;
       const completed = question.level === 5 && levelComplete;
       const nextIndex = participant.question_index + 1;
-      const attemptsUsed = question.level === 1 ? attemptNumber : Number(!timedOut);
+      const attemptsUsed = attemptNumber;
       const reaction = question.level === 1
         ? correct ? "access_granted" : "access_denied"
         : correct ? "breach" : "deflect";
@@ -704,16 +762,14 @@ export function createCompetitionServer({
 
       db.exec("BEGIN IMMEDIATE");
       try {
-        if (!timedOut) {
-          db.prepare(`
-            INSERT INTO answer_attempts (participant_id, question_id, attempt_number, submitted_answer, is_correct, attempted_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `).run(participant.id, question.id, attemptsUsed, submitted, Number(correct), now);
-        }
         db.prepare(`
-          INSERT INTO answers (participant_id, question_id, level, question_ordinal, submitted_answer, is_correct, points_awarded, attempts_used, answered_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(participant.id, question.id, question.level, ordinal, submitted, Number(correct), awarded, attemptsUsed, now);
+          INSERT INTO answer_attempts (participant_id, question_id, attempt_number, submitted_answer, is_correct, attempted_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(participant.id, question.id, attemptsUsed, submitted, Number(correct), now);
+        db.prepare(`
+          INSERT INTO answers (participant_id, question_id, level, question_ordinal, submitted_answer, correct_answer, is_correct, points_awarded, attempts_used, answered_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(participant.id, question.id, question.level, ordinal, submitted, question.expected_answer, Number(correct), awarded, attemptsUsed, now);
         if (question.level < 5 && levelComplete) {
           db.prepare(`
             UPDATE participants
@@ -862,6 +918,86 @@ export function createCompetitionServer({
       return sendJson(response, 200, readAdminUpdates(revision, eventId));
     }
 
+    if (method === "GET" && path === "/api/admin/export") {
+      requireAdmin(request);
+      const type = url.searchParams.get("type");
+      if (type !== "results" && type !== "answers") throw new HttpError(400, "Choose a supported CSV export.");
+      const search = (url.searchParams.get("search") || "").trim().toLocaleLowerCase();
+      const filters = {
+        college: url.searchParams.get("college") || "",
+        department: url.searchParams.get("department") || "",
+        year: url.searchParams.get("year") || "",
+        status: url.searchParams.get("status") || ""
+      };
+      const sort = url.searchParams.get("sort");
+      const participants = adminParticipants().filter((person) => {
+        const searchable = [person.full_name, person.email, person.phone, person.college, person.department, person.year]
+          .join(" ").toLocaleLowerCase();
+        return (!search || searchable.includes(search)) &&
+          (!filters.college || person.college === filters.college) &&
+          (!filters.department || person.department === filters.department) &&
+          (!filters.year || person.year === filters.year) &&
+          (!filters.status || person.status === filters.status);
+      }).sort((a, b) => {
+        if (sort === "oldest") return a.created_at - b.created_at;
+        if (sort === "highest") return (b.level5_score - a.level5_score) || (b.level4_score - a.level4_score) ||
+          (b.level3_score - a.level3_score) || (b.level2_score - a.level2_score) || (b.level1_score - a.level1_score);
+        if (sort === "lowest") return (a.level5_score - b.level5_score) || (a.level4_score - b.level4_score) ||
+          (a.level3_score - b.level3_score) || (a.level2_score - b.level2_score) || (a.level1_score - b.level1_score);
+        if (sort === "name") return a.full_name.localeCompare(b.full_name);
+        return b.created_at - a.created_at;
+      });
+      const allowedParticipantIds = new Set(participants.map((person) => person.id));
+      if (type === "results") {
+        const columns = [
+          "Participant ID", "Name", "College", "Email", "Phone", "Year", "Department", "Status",
+          "Current Level", "Level 1 Score", "Level 2 Score", "Level 3 Score", "Level 4 Score", "Level 5 Score",
+          "Total Score", "Overall Percentage", "Level 1 Qualified", "Level 2 Qualified", "Level 3 Qualified",
+          "Level 4 Qualified", "Registered At"
+        ];
+        const rows = participants.map((person) => {
+          const total = [1, 2, 3, 4, 5].reduce((sum, level) => sum + Number(person[`level${level}_score`] || 0), 0);
+          return [
+            person.id, person.full_name, person.college, person.email, person.phone, person.year, person.department,
+            person.status, person.current_level, ...[1, 2, 3, 4, 5].map((level) => person[`level${level}_score`] || 0),
+            total, `${(total / 5).toFixed(1)}%`, ...[1, 2, 3, 4].map((level) => person[`level${level}_qualified`] ? "Yes" : "No"),
+            new Date(person.created_at).toISOString()
+          ];
+        });
+        sendCsv(response, "cyber-escape-results.csv", columns, rows);
+        return;
+      }
+      const columns = [
+        "Participant ID", "Name", "College", "Email", "Level", "Challenge ID", "Challenge Number",
+        "Attempt Number", "Participant Answer", "Correct Answer", "Attempt Correct", "Final Evaluation",
+        "Points Awarded", "Attempts Used", "Attempted At", "Final Answered At"
+      ];
+      const attempts = db.prepare(`
+        SELECT p.id AS participant_id, p.full_name, p.college, p.email,
+          aa.question_id, a.question_ordinal, aa.attempt_number,
+          aa.submitted_answer AS attempt_answer, a.submitted_answer AS final_answer,
+          aa.is_correct AS attempt_correct, a.is_correct AS final_correct,
+          a.correct_answer, a.points_awarded, a.attempts_used,
+          aa.attempted_at, a.answered_at
+        FROM answer_attempts aa
+        JOIN participants p ON p.id = aa.participant_id
+        LEFT JOIN answers a ON a.participant_id = aa.participant_id AND a.question_id = aa.question_id
+        ORDER BY p.created_at DESC, a.level, a.question_ordinal, aa.question_id, aa.attempt_number
+      `).all().filter((attempt) => allowedParticipantIds.has(attempt.participant_id));
+      const rows = attempts.map((attempt) => [
+        attempt.participant_id, attempt.full_name, attempt.college, attempt.email,
+        getChallenge(attempt.question_id)?.level || "",
+        attempt.question_id, attempt.question_ordinal || "", attempt.attempt_number, attempt.attempt_answer,
+        attempt.correct_answer || "", attempt.attempt_correct ? "Yes" : "No",
+        attempt.final_correct === null || attempt.final_correct === undefined ? "Pending" : attempt.final_correct ? "Correct" : "Incorrect",
+        attempt.points_awarded ?? "", attempt.attempts_used ?? "",
+        new Date(attempt.attempted_at).toISOString(),
+        attempt.answered_at === null || attempt.answered_at === undefined ? "" : new Date(attempt.answered_at).toISOString()
+      ]);
+      sendCsv(response, "cyber-escape-detailed-answers.csv", columns, rows);
+      return;
+    }
+
     const detailsMatch = method === "GET" && /^\/api\/admin\/participants\/([a-f0-9]{32})$/.exec(path);
     if (detailsMatch) {
       requireAdmin(request);
@@ -882,12 +1018,13 @@ export function createCompetitionServer({
             artifact: challenge.artifact,
             context: challenge.context || null,
             clues: challenge.clues || [],
+            expected_answer: challenge.expected_answer,
             points: challenge.points
           };
         })
       ]));
       const answers = db.prepare(`
-        SELECT question_id, level, question_ordinal, submitted_answer, is_correct, points_awarded, attempts_used, answered_at
+        SELECT question_id, level, question_ordinal, submitted_answer, correct_answer, is_correct, points_awarded, attempts_used, answered_at
         FROM answers WHERE participant_id = ? ORDER BY answered_at
       `).all(participantId).map((answer) => ({
         ...answer,
