@@ -71,26 +71,100 @@ const levelOneScenarios = [
 ];
 
 const levelTwoScenarios = [
-  ["https://portal.northstar.test/account/security", "A staff member reports a new account-security link. Enter the destination hostname shown by the address bar.", "northstar.test"],
-  ["https://northstar.test.account-check.example/login", "An urgent account-lock message arrived. Identify and enter the untrusted destination hostname.", "northstar.test.account-check.example"],
-  ["https://sso.campus.example.test/session", "An enrollment notice links to the campus sign-in. Enter the destination hostname for the incident note.", "sso.campus.example.test"],
-  ["https://paypaI.example.test/verify", "The payment alert uses a brand-like spelling. Enter the actual destination hostname exactly as displayed.", "paypai.example.test"],
-  ["https://mail.riverbank.test/message-center", "A customer requested a secure-message review. Enter the destination hostname.", "mail.riverbank.test"],
-  ["https://login.riverbank.verify-user.example/reset", "A forced-reset message claims to be from a bank. Enter the hostname that receives the credentials.", "login.riverbank.verify-user.example"],
-  ["https://docs.studio.test/share/brief", "A teammate shared a project brief. Enter the destination hostname for verification.", "docs.studio.test"],
-  ["https://updates.example.test@signin.test.invalid/session", "Inspect the address syntax. Enter the hostname the browser actually connects to.", "signin.test.invalid"],
-  ["https://store.museum.test/receipt", "A requested receipt is ready. Enter the destination hostname.", "store.museum.test"],
-  ["https://secure.museum.test.invalid.gift-check.example/claim", "An unrequested reward page asks for identity data. Enter its destination hostname.", "secure.museum.test.invalid.gift-check.example"],
-  ["https://accounts.orbit.test/device-review", "A sign-in alert asks the user to inspect registered devices. Enter the destination hostname.", "accounts.orbit.test"],
-  ["https://orbit.test@session-orbit.example/confirm", "A session warning places a familiar brand before an at-sign. Enter the real destination hostname.", "session-orbit.example"],
-  ["https://intranet.lab.example.test/home", "A staff portal link came from the internal directory. Enter the destination hostname.", "intranet.lab.example.test"],
-  ["https://secure-payments.riverbank.test.evil.example/authorize", "A payment page uses a trusted name inside a longer hostname. Enter the full destination hostname.", "secure-payments.riverbank.test.evil.example"],
-  ["https://status.cloudbox.test/incidents", "A service-status notification links to the vendor's status page. Enter the destination hostname.", "status.cloudbox.test"],
-  ["https://cloudbox.test.login-review.example/auth", "The message threatens immediate account closure. Enter the host that would receive a submitted password.", "cloudbox.test.login-review.example"],
-  ["https://library.cedar.example.test/account", "A library notice points to the listed campus hostname. Enter the destination hostname.", "library.cedar.example.test"],
-  ["https://cedar.example.test@verify-cedar.example/access", "The URL contains user information before the at-sign. Enter the destination host.", "verify-cedar.example"],
-  ["https://support.northwind.test/ticket/4821", "A support ticket update was expected. Enter the destination hostname.", "support.northwind.test"],
-  ["https://northwind.test.security-center.example/renew", "An unexpected renewal warning links to a hostname containing the brand text. Enter the full destination hostname.", "northwind.test.security-center.example"]
+  {
+    prompt: "A classmate sends this short message. What should you do with its link? Type a short action.",
+    artifact: `TEXT MESSAGE
+"Your campus mailbox is full. Sign in here now: campus-mail-fix.test"
+
+KNOWN FACT
+The campus sign-in page is campus.example.edu.`,
+    hint: "The link does not match the known campus sign-in. Do not trust a link just because a message sounds familiar.",
+    expected_answer: "do not click the link",
+    accepted_answers: ["ignore the link", "do not open the link", "avoid the link", "don't click", "don't click the link"]
+  },
+  {
+    prompt: "Read the email greeting. What is one clear warning sign? Type the clue.",
+    artifact: `EMAIL
+From: Campus IT
+To: All students
+Subject: Your mailbox is almost full
+Message: "Dear user, open the attached guide to keep your account."`,
+    hint: "Look at how the message addresses the reader. A message sent to many people may use a vague greeting.",
+    expected_answer: "generic greeting",
+    accepted_answers: ["dear user", "impersonal greeting", "vague greeting"]
+  },
+  {
+    prompt: "A page claims to be the campus sign-in, but the logo is blurry, the text has spelling mistakes, and it asks for your date of birth for a raffle. What kind of page is this?",
+    artifact: `LOGIN PAGE CLUES
+Page title: Campus Portal
+Logo: blurry and stretched
+Text: several spelling mistakes
+Extra request: password and date of birth to enter a raffle`,
+    hint: "A familiar name or logo does not prove a page is genuine. Check whether the page and its requests make sense.",
+    expected_answer: "fake login page",
+    accepted_answers: ["fake sign-in page", "phishing page", "fake page"]
+  },
+  {
+    prompt: "You were not expecting a file with this email. Type the attachment name you should treat with caution.",
+    artifact: `EMAIL SUBJECT: Exam timetable
+ATTACHMENT: FINAL_TIMETABLE.xlsm
+NOTE: You did not ask anyone to send you a file.`,
+    hint: "Pause before opening files you were not expecting. Confirm with the sender using a contact method you already trust.",
+    expected_answer: "final_timetable.xlsm"
+  },
+  {
+    prompt: "The college help desk says its address is helpdesk@campus.edu. Type the sender address that does not match.",
+    artifact: `EMAIL
+From: helpdesk@campus-support.example
+Subject: Verify your campus account`,
+    hint: "Compare the sender's full address with the known college address, not just the display name.",
+    expected_answer: "helpdesk@campus-support.example"
+  },
+  {
+    prompt: "This message says your account will be deleted in five minutes. Type the pressure tactic it is using.",
+    artifact: `TEXT MESSAGE
+"FINAL WARNING: Your account will be deleted in 5 minutes.
+Act now or lose access!"`,
+    hint: "Notice how the message tries to rush you into acting without time to check it.",
+    expected_answer: "false urgency",
+    accepted_answers: ["urgency", "time pressure", "pressure"]
+  },
+  {
+    prompt: "A message asks you to reply with your password or six-digit sign-in code. Type one thing you must never share.",
+    artifact: `CHAT MESSAGE
+"I am from IT support. Send me your password or the six-digit code we just texted you."`,
+    hint: "Support staff should not ask you to send secret sign-in details in a message.",
+    expected_answer: "otp",
+    accepted_answers: ["password", "one-time code", "one-time password", "sign-in code"]
+  },
+  {
+    prompt: "The official college website is campus.edu. Type the domain in this message that does not match it.",
+    artifact: `MESSAGE LINK
+campus-login-help.test
+
+OFFICIAL COLLEGE WEBSITE
+campus.edu`,
+    hint: "Compare the two website names. The official college name should be the ending domain, not just a similar word.",
+    expected_answer: "campus-login-help.test"
+  },
+  {
+    prompt: "You receive an account alert about a login from a device you do not recognize. What account activity should you check? Type your answer.",
+    artifact: `ACCOUNT ALERT
+New sign-in detected from an unknown device.
+You were not trying to sign in.`,
+    hint: "Use the official account app or website directly. Look for the list of recent sign-ins.",
+    expected_answer: "recent sign-ins",
+    accepted_answers: ["sign-in activity", "login activity", "account activity", "sign-in history", "login history"]
+  },
+  {
+    prompt: "You are leaving a shared college computer and your email is still open. Type the security action to take.",
+    artifact: `SHARED COMPUTER
+Your email account is signed in.
+The next student is waiting to use this computer.`,
+    hint: "Make sure the next person cannot open your account from this computer.",
+    expected_answer: "sign out",
+    accepted_answers: ["log out", "sign out of the account", "log off"]
+  }
 ];
 
 const levelThreeSeeds = [
@@ -133,14 +207,16 @@ const levelOnePool = levelOneScenarios.map(({ id, terminal, prompt, context, clu
   points: 20
 }));
 
-const levelTwoPool = levelTwoScenarios.map(([url, prompt, expected_answer], index) => ({
-  id: `GAM-${String(index + 1).padStart(2, "0")}`,
+const levelTwoPool = levelTwoScenarios.map(({ prompt, artifact, hint, expected_answer, accepted_answers }, index) => ({
+  id: `GAM-E${String(index + 1).padStart(2, "0")}`,
   level: 2,
-  terminal: "LINK FORENSICS",
+  terminal: "GAMMA BREACH EVIDENCE",
   prompt,
-  artifact: `CAPTURED MESSAGE URL\n${url}\n\nSIMULATED ENVIRONMENT · .TEST DOMAINS DO NOT RESOLVE`,
-  input_label: "DESTINATION HOST",
-  placeholder: "Enter the hostname",
+  artifact,
+  hint,
+  accepted_answers,
+  input_label: "TYPE YOUR FINDING",
+  placeholder: "Enter a short answer",
   expected_answer,
   points: 10
 }));
@@ -255,6 +331,7 @@ export const LEVEL_QUESTION_COUNTS = [5, 10, 5, 1, 5];
 export const LEVEL_NAMES = ["ARMOR PROTOCOL", "GAMMA BREACH", "THE INITIATIVE", "THE FIRST CODE", "FINAL DIRECTIVE"];
 export const QUALIFYING_SCORES = [50, 60, 70, 70];
 export const LEVEL_ONE_ATTEMPTS = 2;
+export const LEVEL_TWO_ATTEMPTS = 2;
 export const LEVEL_ONE_QUESTION_MS = 120 * 1000;
 const challengesById = new Map(CHALLENGE_POOLS.flat().map((challenge) => [challenge.id, challenge]));
 

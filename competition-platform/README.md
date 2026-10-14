@@ -21,7 +21,7 @@ For a production-style local run, run `npm run build` followed by `npm start`. T
 ## Competition flow
 
 - Level 1, **ARMOR PROTOCOL**: exactly five beginner-friendly four-digit password investigations. Each challenge combines 2–3 fictional profile clues using simple addition, subtraction, digit-combination, or ordering; each is worth 20 marks, with two attempts and a fresh two-minute deadline. A wrong first attempt returns a contextual hint without revealing the password. Qualification is 50.
-- Level 2, **GAMMA BREACH**: ten typed-response fictional URL investigations, randomly assigned from a 20-challenge pool; qualification is 60.
+- Level 2, **GAMMA BREACH**: ten distinct beginner-friendly, typed-response scenarios covering suspicious links, phishing clues, fake login pages, unexpected attachments, sender addresses, urgency, password/OTP requests, domain mismatches, login alerts, and safe account actions. Each challenge allows two attempts; a wrong first answer gives a contextual hint, and missed answers are shown only after Level 2 ends. Qualification is 60.
 - Level 3, **THE INITIATIVE**: five typed cryptography challenges, randomly assigned from a 15-challenge pool; qualification is 70.
 - Level 4, **THE FIRST CODE**: one difficult, multi-step Java-source investigation, randomly assigned from five variants; qualification is 70.
 - Level 5, **FINAL DIRECTIVE**: five hidden-tool signal challenges randomly assigned from a 12-challenge pool. Each gets a fresh server-enforced 30-second deadline; unused time does not carry forward and a timeout is recorded as unanswered/wrong.

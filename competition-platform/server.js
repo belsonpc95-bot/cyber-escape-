@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { assignChallenges, getChallenge, LEVEL_NAMES, LEVEL_ONE_ATTEMPTS, LEVEL_ONE_QUESTION_MS, LEVEL_QUESTION_COUNTS, QUALIFYING_SCORES } from "./server/questions.js";
+import { assignChallenges, getChallenge, LEVEL_NAMES, LEVEL_ONE_ATTEMPTS, LEVEL_ONE_QUESTION_MS, LEVEL_QUESTION_COUNTS, LEVEL_TWO_ATTEMPTS, QUALIFYING_SCORES } from "./server/questions.js";
 
 const PARTICIPANT_COOKIE = "cyber_participant";
 const ADMIN_COOKIE = "cyber_admin";
@@ -170,7 +170,7 @@ function backfillChallengeAssignments(db) {
   }));
   const update = db.prepare(`
     UPDATE participants
-    SET challenge_assignments = ?, question_index = ?, question_attempt_count = ?, awaiting_level = ?, status = ?, level1_score = ?,
+    SET challenge_assignments = ?, question_index = ?, question_attempt_count = ?, awaiting_level = ?, status = ?, level1_score = ?, level2_score = ?,
       level1_qualified = ?, level2_qualified = ?, level3_qualified = ?, level4_qualified = ?,
       question_started_at = ?, level5_completed_at = ?, updated_at = ?, revision = ?
     WHERE id = ?
@@ -203,9 +203,14 @@ function backfillChallengeAssignments(db) {
     let status = participant.status;
     let qualified = [1, 2, 3, 4].map((level) => Number(participant[`level${level}_qualified`]));
     let levelOneScore = participant.level1_score;
+    let levelTwoScore = participant.level2_score;
     if (!currentAssignmentWasValid && status === "active" && participant.current_level === 1 && awaitingLevel === null) {
       levelOneScore = 0;
       qualified[0] = 0;
+    }
+    if (!currentAssignmentWasValid && status === "active" && participant.current_level === 2 && awaitingLevel === null) {
+      levelTwoScore = 0;
+      qualified[1] = 0;
     }
     let questionStartedAt = participant.question_started_at;
     if (!currentAssignmentWasValid) questionStartedAt = null;
@@ -245,6 +250,7 @@ function backfillChallengeAssignments(db) {
       awaitingLevel,
       status,
       levelOneScore,
+      levelTwoScore,
       ...qualified,
       questionStartedAt,
       level5CompletedAt,
@@ -408,14 +414,37 @@ export function createCompetitionServer({
     return assignChallenges(level, usedSets);
   };
 
-  const levelCompletion = (participant, level, qualified) => ({
-    level,
-    level_name: LEVEL_NAMES[level - 1],
-    score: participant[`level${level}_score`],
-    qualified,
-    next_level: qualified && level < 5 ? LEVEL_NAMES[level] : null,
-    mission_complete: level === 5 && participant.status === "completed"
-  });
+  const levelCompletion = (participant, level, qualified) => {
+    const completion = {
+      level,
+      level_name: LEVEL_NAMES[level - 1],
+      score: participant[`level${level}_score`],
+      qualified,
+      next_level: qualified && level < 5 ? LEVEL_NAMES[level] : null,
+      mission_complete: level === 5 && participant.status === "completed"
+    };
+    if (level === 2) {
+      const assignedIds = JSON.parse(participant.challenge_assignments || "{}")["2"] || [];
+      completion.answer_review = assignedIds.length
+        ? db.prepare(`
+          SELECT question_id, question_ordinal
+          FROM answers
+          WHERE participant_id = ? AND level = 2 AND is_correct = 0
+            AND question_id IN (${assignedIds.map(() => "?").join(", ")})
+          ORDER BY question_ordinal
+        `).all(participant.id, ...assignedIds).map(({ question_id, question_ordinal }) => {
+          const challenge = getChallenge(question_id);
+          if (!challenge) throw new Error(`Level 2 challenge ${question_id} is missing from the challenge archive.`);
+          return {
+            challenge: question_ordinal,
+            prompt: challenge.prompt,
+            correct_answer: challenge.expected_answer
+          };
+        })
+        : [];
+    }
+    return completion;
+  };
 
   const publicQuestion = (participant) => {
     if (participant.awaiting_level !== null) {
@@ -470,10 +499,13 @@ export function createCompetitionServer({
       placeholder: question.placeholder,
       level_name: LEVEL_NAMES[question.level - 1]
     };
+    if (question.level === 1 || question.level === 2) {
+      const maxAttempts = question.level === 1 ? LEVEL_ONE_ATTEMPTS : LEVEL_TWO_ATTEMPTS;
+      responseQuestion.attempts_remaining = maxAttempts - participant.question_attempt_count;
+    }
     if (question.level === 1) {
       const remaining = Math.max(0, LEVEL_ONE_QUESTION_MS - (Date.now() - participant.question_started_at));
       responseQuestion.seconds_remaining = Math.ceil(remaining / 1000);
-      responseQuestion.attempts_remaining = LEVEL_ONE_ATTEMPTS - participant.question_attempt_count;
     }
     if (question.level === 5) {
       const remaining = Math.max(0, LEVEL_FIVE_QUESTION_MS - (Date.now() - participant.question_started_at));
@@ -658,9 +690,15 @@ export function createCompetitionServer({
         throw new HttpError(400, "Enter a four-digit password.");
       }
       const submitted = timedOut ? null : String(payload.answer).trim().slice(0, 200);
-      const correct = !timedOut && normalizeAnswer(submitted) === normalizeAnswer(question.expected_answer);
+      const acceptedAnswers = [question.expected_answer, ...(question.accepted_answers || [])];
+      const correct = !timedOut && acceptedAnswers.some((answer) =>
+        normalizeAnswer(submitted) === normalizeAnswer(answer)
+      );
       const attemptNumber = timedOut ? participant.question_attempt_count : participant.question_attempt_count + 1;
-      if (question.level === 1 && !correct && !timedOut && attemptNumber < LEVEL_ONE_ATTEMPTS) {
+      const maxAttempts = question.level === 1
+        ? LEVEL_ONE_ATTEMPTS
+        : question.level === 2 ? LEVEL_TWO_ATTEMPTS : 1;
+      if ([1, 2].includes(question.level) && !correct && !timedOut && attemptNumber < maxAttempts) {
         const revision = nextRevision();
         db.exec("BEGIN IMMEDIATE");
         try {
@@ -681,9 +719,11 @@ export function createCompetitionServer({
         broadcastAdminUpdates();
         return sendJson(response, 200, {
           retry: true,
-          attempts_remaining: LEVEL_ONE_ATTEMPTS - attemptNumber,
+          attempts_remaining: maxAttempts - attemptNumber,
           hint: question.hint,
-          seconds_remaining: Math.max(0, Math.ceil((participant.question_started_at + LEVEL_ONE_QUESTION_MS - now) / 1000)),
+          ...(question.level === 1 ? {
+            seconds_remaining: Math.max(0, Math.ceil((participant.question_started_at + LEVEL_ONE_QUESTION_MS - now) / 1000))
+          } : {}),
           reaction: "access_denied"
         });
       }
@@ -696,7 +736,7 @@ export function createCompetitionServer({
       const eliminated = levelComplete && question.level < 5 && !qualified;
       const completed = question.level === 5 && levelComplete;
       const nextIndex = participant.question_index + 1;
-      const attemptsUsed = question.level === 1 ? attemptNumber : Number(!timedOut);
+      const attemptsUsed = [1, 2].includes(question.level) ? attemptNumber : Number(!timedOut);
       const reaction = question.level === 1
         ? correct ? "access_granted" : "access_denied"
         : correct ? "breach" : "deflect";

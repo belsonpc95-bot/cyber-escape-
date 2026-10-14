@@ -109,7 +109,7 @@ test("server challenge pools cover the requested mission distribution and unique
   assert.deepEqual(LEVEL_NAMES, ["ARMOR PROTOCOL", "GAMMA BREACH", "THE INITIATIVE", "THE FIRST CODE", "FINAL DIRECTIVE"]);
   assert.deepEqual(QUALIFYING_SCORES, [50, 60, 70, 70]);
   assert.deepEqual(LEVEL_QUESTION_COUNTS, [5, 10, 5, 1, 5]);
-  assert.deepEqual(CHALLENGE_POOLS.map((pool) => pool.length), [5, 20, 15, 5, 12]);
+  assert.deepEqual(CHALLENGE_POOLS.map((pool) => pool.length), [5, 10, 15, 5, 12]);
   for (let level = 1; level <= 5; level += 1) {
     const selected = assignChallenges(level);
     assert.equal(selected.length, LEVEL_QUESTION_COUNTS[level - 1]);
@@ -125,6 +125,17 @@ test("server challenge pools cover the requested mission distribution and unique
     challenge.context && challenge.hint && challenge.clues.every((clue) => !clue.includes(challenge.expected_answer))
   ));
   assert.ok(CHALLENGE_POOLS[0].every((challenge) => challenge.points === 20));
+  assert.equal(CHALLENGE_POOLS[1].length, 10);
+  assert.equal(new Set(CHALLENGE_POOLS[1].map((challenge) => challenge.prompt)).size, 10);
+  assert.equal(new Set(CHALLENGE_POOLS[1].map((challenge) => challenge.artifact)).size, 10);
+  assert.ok(CHALLENGE_POOLS[1].every((challenge) =>
+    challenge.hint && challenge.expected_answer && challenge.points === 10 &&
+    challenge.options === undefined && !challenge.timed
+  ));
+  assert.ok(CHALLENGE_POOLS[1].some((challenge) => challenge.expected_answer === "fake login page"));
+  assert.ok(CHALLENGE_POOLS[1].some((challenge) => challenge.expected_answer === "final_timetable.xlsm"));
+  assert.ok(CHALLENGE_POOLS[1].some((challenge) => challenge.expected_answer === "helpdesk@campus-support.example"));
+  assert.ok(CHALLENGE_POOLS[1].some((challenge) => challenge.accepted_answers?.includes("password")));
   const usedInvestigation = assignChallenges(4);
   assert.notDeepEqual(assignChallenges(4, [usedInvestigation]), usedInvestigation);
 });
@@ -289,7 +300,7 @@ test("server stores and evaluates a complete participant session, with private a
       });
       assertNoParticipantEvaluation(result.data);
       assert.equal(result.response.status, 200, `Level ${level} challenge ${index + 1} is accepted`);
-      if (level === 1 && result.data.retry) {
+      if ([1, 2].includes(level) && result.data.retry) {
         result = await request("/api/participant/answer", {
           method: "POST",
           cookie: participantCookieValue,
@@ -346,8 +357,54 @@ test("server stores and evaluates a complete participant session, with private a
   });
   assert.equal(current.data.level, 2);
   assert.equal(current.data.question.id, assignedChallengeIds(participantId, 2)[0]);
-  answer = await submitAssignedLevel(participantCookie, participantId, 2, 10);
+  assert.equal(current.data.question.attempts_remaining, 2);
+  assertNoParticipantEvaluation(current.data);
+  const assignedGammaIds = assignedChallengeIds(participantId, 2);
+  const aliasChallengeId = assignedGammaIds.find((id) => getChallenge(id).accepted_answers?.length);
+  const levelTwoIds = [aliasChallengeId, ...assignedGammaIds.filter((id) => id !== aliasChallengeId)];
+  const participantAssignments = JSON.parse(server.database.prepare("SELECT challenge_assignments FROM participants WHERE id = ?")
+    .get(participantId).challenge_assignments);
+  participantAssignments["2"] = levelTwoIds;
+  server.database.prepare("UPDATE participants SET challenge_assignments = ? WHERE id = ?")
+    .run(JSON.stringify(participantAssignments), participantId);
+  current = await request("/api/participant/current", { cookie: participantCookie });
+  assert.equal(current.data.question.id, aliasChallengeId);
+  const firstGammaChallenge = getChallenge(levelTwoIds[0]);
+  assert.ok(firstGammaChallenge.accepted_answers?.length);
+  const firstGammaWrong = await submit(firstGammaChallenge.id, "open the suspicious link");
+  assert.equal(firstGammaWrong.data.retry, true);
+  assert.equal(firstGammaWrong.data.attempts_remaining, 1);
+  assert.ok(firstGammaWrong.data.hint);
+  assert.equal(firstGammaWrong.data.correct_answer, undefined);
+  const firstGammaRetryState = await request("/api/participant/current", { cookie: participantCookie });
+  assert.equal(firstGammaRetryState.data.question.attempts_remaining, 1);
+  const firstGammaAlias = firstGammaChallenge.accepted_answers?.[0] || firstGammaChallenge.expected_answer;
+  const firstGammaCorrect = await submit(firstGammaChallenge.id, firstGammaAlias);
+  assert.equal(firstGammaCorrect.data.next_challenge, undefined);
+  assert.equal(firstGammaCorrect.data.question.id, levelTwoIds[1]);
+  assert.equal(firstGammaCorrect.data.question.attempts_remaining, 2);
+
+  const failedGammaChallenge = getChallenge(levelTwoIds[1]);
+  const failedGammaFirst = await submit(failedGammaChallenge.id, "not the answer");
+  assert.equal(failedGammaFirst.data.retry, true);
+  assert.equal(failedGammaFirst.data.attempts_remaining, 1);
+  assert.equal(failedGammaFirst.data.correct_answer, undefined);
+  const failedGammaSecond = await submit(failedGammaChallenge.id, "still not the answer");
+  assert.equal(failedGammaSecond.data.question.id, levelTwoIds[2]);
+  assert.equal(failedGammaSecond.data.question.attempts_remaining, 2);
+  assert.equal(server.database.prepare("SELECT attempts_used FROM answers WHERE participant_id = ? AND question_id = ?")
+    .get(participantId, failedGammaChallenge.id).attempts_used, 2);
+  assert.equal(server.database.prepare("SELECT COUNT(*) AS count FROM answer_attempts WHERE participant_id = ? AND question_id = ?")
+    .get(participantId, failedGammaChallenge.id).count, 2);
+
+  answer = await submitAssignedLevel(participantCookie, participantId, 2, 10, 2);
   assert.equal(answer.data.completion.level_name, "GAMMA BREACH");
+  assert.equal(answer.data.completion.score, 90);
+  assert.deepEqual(answer.data.completion.answer_review, [{
+    challenge: 2,
+    prompt: failedGammaChallenge.prompt,
+    correct_answer: failedGammaChallenge.expected_answer
+  }]);
   current = await request("/api/participant/advance", { method: "POST", cookie: participantCookie, body: {} });
   assert.equal(current.data.level, 3);
   answer = await submitAssignedLevel(participantCookie, participantId, 3, 5);
@@ -415,6 +472,11 @@ test("server stores and evaluates a complete participant session, with private a
   assert.equal(detail.data.assigned_challenges["4"].length, 1);
   assert.equal(detail.data.assigned_challenges["5"].length, 5);
   assert.deepEqual(detail.data.assigned_challenges["1"].map((challenge) => challenge.id), initialChallengeIds);
+  const failedGammaRecord = detail.data.answers.find((record) => record.question_id === failedGammaChallenge.id);
+  assert.equal(failedGammaRecord.is_correct, false);
+  assert.equal(failedGammaRecord.points_awarded, 0);
+  assert.equal(failedGammaRecord.attempts_used, 2);
+  assert.equal(detail.data.attempts.filter((attempt) => attempt.question_id === failedGammaChallenge.id).length, 2);
   assert.equal(detail.data.answers.find((record) => record.question_id === firstPasswordId).attempts_used, 2);
   assert.equal(detail.data.attempts.filter((attempt) => attempt.question_id === firstPasswordId).length, 2);
   assert.equal(detail.data.answers.at(-1).is_correct, false);
@@ -433,7 +495,7 @@ test("server stores and evaluates a complete participant session, with private a
   const mainParticipant = finalUpdates.data.participants.find((participant) => participant.id === participantId);
   assert.equal(mainParticipant.status, "completed");
   assert.equal(mainParticipant.level1_score, 100);
-  assert.equal(mainParticipant.level2_score, 100);
+  assert.equal(mainParticipant.level2_score, 90);
   assert.equal(mainParticipant.level3_score, 100);
   assert.equal(mainParticipant.level4_score, 100);
   assert.equal(mainParticipant.level5_score, 20);

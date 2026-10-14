@@ -119,8 +119,8 @@ function publicQuestionMarkup(question) {
     : question.level === 5
       ? `<div class="tool-string" aria-label="Captured signal">${escapeHtml(question.artifact)}</div>`
       : `<div class="mission-artifact"><div class="artifact-heading"><span class="live-dot"></span>${escapeHtml(question.terminal || "EVIDENCE CONSOLE")}</div><pre>${escapeHtml(question.artifact || "")}</pre></div>`;
-  const attempts = question.level === 1
-    ? `<div class="attempt-counter">PASSWORD ATTEMPTS REMAINING <strong id="attempt-count">${question.attempts_remaining}</strong> / 2</div>`
+  const attempts = [1, 2].includes(question.level)
+    ? `<div class="attempt-counter">ATTEMPTS REMAINING <strong id="attempt-count">${question.attempts_remaining}</strong> / 2</div>`
     : "";
   return `<p class="mission-objective">${escapeHtml(question.prompt)}</p>
     ${artifact}
@@ -130,7 +130,7 @@ function publicQuestionMarkup(question) {
       <label for="mission-answer">${escapeHtml(question.input_label || "TERMINAL INPUT")}</label>
       <div class="terminal-command"><span aria-hidden="true">&gt;</span><input id="mission-answer" name="answer" class="text-input" maxlength="${question.level === 1 ? 4 : 200}" ${question.level === 1 ? 'inputmode="numeric" pattern="[0-9]{4}"' : ""} autocomplete="off" placeholder="${escapeHtml(question.placeholder || "Enter your finding")}" required><button class="button" type="submit">${question.level === 1 ? "UNLOCK" : "EXECUTE"}</button></div>
     </form>
-    <div class="notice" id="game-notice" role="status">${question.level === 1 ? "Analyze the recovered notes. The password is not printed in any one clue." : "Your command will be evaluated by the secure system."}</div>`;
+    <div class="notice" id="game-notice" role="status">${question.level === 1 ? "Analyze the recovered notes. The password is not printed in any one clue." : question.level === 2 ? "Review the evidence and type a short answer. You have two attempts." : "Your command will be evaluated by the secure system."}</div>`;
 }
 
 function renderQuestion(question, level, questionIndex, totalQuestions) {
@@ -142,7 +142,7 @@ function renderQuestion(question, level, questionIndex, totalQuestions) {
   const levelInfo = LEVELS[level - 1];
   const intros = {
     1: "Advanced security laboratory · investigate the operator records, connect the clues, and breach each password gate.",
-    2: "Unstable experimental facility · investigate captured links and submit the destination evidence.",
+    2: "Unstable experimental facility · inspect simple messages, emails, and account alerts. Type what you notice.",
     3: "Cyber operations command · recover encrypted payloads using the clues in each transmission.",
     4: "Classified investigation room · trace the source logic and reconstruct the hidden incident token.",
     5: "Final high-pressure directive · 5 signals, 30 seconds each, 150 seconds maximum. No time carries over."
@@ -177,6 +177,13 @@ function renderLevelCompletion(completion) {
   const finalLevel = level === 5;
   const title = finalLevel ? "FINAL DIRECTIVE COMPLETE" : `LEVEL 0${level} COMPLETE`;
   const status = finalLevel ? "MISSION COMPLETE" : qualified ? "QUALIFIED" : "NOT QUALIFIED";
+  const answerReview = level === 2
+    ? `<section class="mission-artifact answer-review"><div class="artifact-heading"><span class="live-dot"></span>LEVEL 2 ANSWER REVIEW</div><pre>${completion.answer_review?.length
+      ? completion.answer_review.map((item) =>
+        `CHALLENGE ${item.challenge}\n${item.prompt}\nCorrect answer: ${item.correct_answer}`
+      ).map(escapeHtml).join("\n\n")
+      : "No incorrect challenges. Excellent work."}</pre></section>`
+    : "";
   const action = qualified && !finalLevel
     ? `<div class="next-gate">NEXT: ${escapeHtml(completion.next_level)}</div><button type="button" class="button next-level-button" data-action="advance-level">NEXT LEVEL <span aria-hidden="true">↗</span></button>`
     : finalLevel
@@ -188,6 +195,7 @@ function renderLevelCompletion(completion) {
     <div class="completion-name">${escapeHtml(completion.level_name)}</div>
     <div class="hologram-score"><span>${finalLevel ? "LEVEL 5 SCORE" : "LEVEL SCORE"}</span><strong>${Number(completion.score)}<i>/100</i></strong></div>
     <div class="qualification-status">${escapeHtml(status)}</div>
+    ${answerReview}
     ${action}
   </section>`, level - 1);
 }
@@ -252,7 +260,9 @@ async function submitAnswer(answer) {
         field.focus();
       }
       buttons.forEach((button) => { button.disabled = false; });
-      window.setTimeout(() => startQuestionTimer(result.seconds_remaining), 0);
+      if (Number.isInteger(result.seconds_remaining)) {
+        window.setTimeout(() => startQuestionTimer(result.seconds_remaining), 0);
+      }
       return;
     }
     if (result.completion) renderLevelCompletion(result.completion);
