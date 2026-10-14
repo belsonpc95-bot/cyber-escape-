@@ -170,18 +170,23 @@ function normalizeAnswer(answer) {
 }
 
 function levelTwoOptions(participantId, question) {
-  if (!Array.isArray(question.answer_options) || question.answer_options.length !== 2) {
-    throw new Error(`Level 2 challenge ${question.id} must have exactly two answer options.`);
+  if (!Array.isArray(question.answer_options) || question.answer_options.length !== 4) {
+    throw new Error(`Level 2 challenge ${question.id} must have exactly four answer options.`);
   }
-  const correctFirst = createHash("sha256")
+  const seed = createHash("sha256")
     .update(`${participantId}:${question.id}`)
-    .digest()[0] % 2 === 0;
-  const texts = correctFirst
-    ? question.answer_options
-    : [question.answer_options[1], question.answer_options[0]];
+    .digest();
+  const seedHex = seed.toString("hex");
+  const correctPosition = seed[0] % question.answer_options.length;
+  const distractors = question.answer_options.slice(1).sort((left, right) =>
+    createHash("sha256").update(`${seedHex}:${left}`).digest("hex")
+      .localeCompare(createHash("sha256").update(`${seedHex}:${right}`).digest("hex"))
+  );
+  const texts = [...distractors];
+  texts.splice(correctPosition, 0, question.answer_options[0]);
   return {
-    options: texts.map((text, index) => ({ value: index === 0 ? "A" : "B", text })),
-    correctOption: correctFirst ? "A" : "B"
+    options: texts.map((text, index) => ({ value: "ABCD"[index], text })),
+    correctOption: "ABCD"[correctPosition]
   };
 }
 
@@ -738,8 +743,8 @@ export function createCompetitionServer({
       if (question.level === 1 && !timedOut && !/^\d{4}$/.test(payload.answer.trim())) {
         throw new HttpError(400, "Enter a four-digit password.");
       }
-      if (question.level === 2 && !["A", "B"].includes(String(payload.answer || "").trim().toUpperCase())) {
-        throw new HttpError(400, "Choose Option A or Option B.");
+      if (question.level === 2 && !["A", "B", "C", "D"].includes(String(payload.answer || "").trim().toUpperCase())) {
+        throw new HttpError(400, "Choose Option A, B, C, or D.");
       }
       const submitted = timedOut ? null : String(payload.answer).trim().slice(0, 200);
       const levelTwoAnswer = question.level === 2 ? levelTwoOptions(participant.id, question) : null;

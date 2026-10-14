@@ -223,7 +223,9 @@ The campus sign-in page is campus.example.edu.`,
     expected_answer: "do not click the link",
     answer_options: [
       "Ignore the message link and open campus.example.edu yourself.",
-      "Open the link after checking that the page shows a padlock."
+      "Open the link after checking that the page shows a padlock.",
+      "Search for the campus name and use the first sponsored result.",
+      "Reply to the message and ask the sender to confirm the link."
     ],
     explanation: "A padlock only means the connection is encrypted. It does not prove the page belongs to your campus."
   },
@@ -238,7 +240,9 @@ Message: "Dear user, open the attached guide to keep your account."`,
     expected_answer: "generic greeting",
     answer_options: [
       "It uses the vague greeting \"Dear user\" and asks you to open a file.",
-      "It was sent to all students, which proves the sender is an impostor."
+      "It was sent to all students, which proves the sender is an impostor.",
+      "The subject mentions a mailbox limit, which is always a scam.",
+      "The sender name says Campus IT, which proves the attachment is safe."
     ],
     explanation: "A vague greeting and an unexpected file deserve caution. A message sent to many students is not, by itself, proof of fraud."
   },
@@ -253,7 +257,9 @@ Extra request: password and date of birth to enter a raffle`,
     expected_answer: "fake login page",
     answer_options: [
       "Close it and reach the campus portal through its known official address.",
-      "Continue because the page title says Campus Portal."
+      "Continue because the page title says Campus Portal.",
+      "Enter only your username first to see whether the page accepts it.",
+      "Use the page if the address starts with HTTPS."
     ],
     explanation: "A page title can be copied. Spelling problems and an unrelated request are warning signs; use the official address you already know."
   },
@@ -266,7 +272,9 @@ NOTE: You did not ask anyone to send you a file.`,
     expected_answer: "final_timetable.xlsm",
     answer_options: [
       "Confirm with the sender using a contact method you already trust.",
-      "Open it in a spreadsheet app, but do not enable macros unless asked."
+      "Open it in a spreadsheet app, but do not enable macros unless asked.",
+      "Preview it in the browser because previews cannot run harmful content.",
+      "Ask the sender to resend it as a ZIP file, then open the archive."
     ],
     explanation: "An unexpected macro-enabled file should be verified before opening. Opening it first can still expose you to risk."
   },
@@ -279,7 +287,9 @@ Subject: Verify your campus account`,
     expected_answer: "helpdesk@campus-support.example",
     answer_options: [
       "Treat it as unverified because the sender's domain differs from campus.edu.",
-      "Trust it because the display name matches the college help desk."
+      "Trust it because the display name matches the college help desk.",
+      "Trust it if the email includes the college logo and correct colors.",
+      "Reply to the address shown and ask whether the request is genuine."
     ],
     explanation: "Display names can be chosen by the sender. Check the full email address and verify through a known college contact."
   },
@@ -292,7 +302,9 @@ Act now or lose access!"`,
     expected_answer: "false urgency",
     answer_options: [
       "Pause and check with IT through its official contact details.",
-      "Reply quickly and ask the sender to confirm the deadline."
+      "Reply quickly and ask the sender to confirm the deadline.",
+      "Follow the link but stop if it asks for a one-time code.",
+      "Forward the message to classmates to see if they received it too."
     ],
     explanation: "The short deadline is designed to rush you. Verify the claim through a trusted channel rather than replying to the message."
   },
@@ -304,7 +316,9 @@ Act now or lose access!"`,
     expected_answer: "otp",
     answer_options: [
       "Do not share either secret; contact IT using its official channel.",
-      "Share the one-time code, but keep your password private."
+      "Share the one-time code, but keep your password private.",
+      "Share the password after the caller confirms your student ID.",
+      "Read the code aloud if the support request sounds urgent."
     ],
     explanation: "Never send a password or one-time code to someone in a message. A code can let them sign in as you."
   },
@@ -319,7 +333,9 @@ campus.edu`,
     expected_answer: "campus-login-help.test",
     answer_options: [
       "Type campus.edu yourself or use a saved official bookmark.",
-      "Use the link because it contains the word \"campus\"."
+      "Use the link because it contains the word \"campus\".",
+      "Open the link in a private window to make the site trustworthy.",
+      "Use it if the browser displays a padlock beside the address."
     ],
     explanation: "A familiar word inside a different domain does not make it official. Use the known campus address instead."
   },
@@ -332,7 +348,9 @@ You were not trying to sign in.`,
     expected_answer: "recent sign-ins",
     answer_options: [
       "Open the official app or site directly and review recent sign-ins.",
-      "Click the alert's link and enter your password to confirm the login."
+      "Click the alert's link and enter your password to confirm the login.",
+      "Reply to the alert with your current password to lock the account.",
+      "Ignore it because an unknown device alert cannot be real."
     ],
     explanation: "Check account activity through the official app or site. Links inside unexpected alerts may lead to fake sign-in pages."
   },
@@ -345,7 +363,9 @@ The next student is waiting to use this computer.`,
     expected_answer: "sign out",
     answer_options: [
       "Sign out of your account before leaving the computer.",
-      "Close the browser tab; the shared computer will end your session."
+      "Close the browser tab; the shared computer will end your session.",
+      "Clear the browser history but leave the account open.",
+      "Lock the screen and let the next student use the signed-in session."
     ],
     explanation: "Closing a tab may leave your account signed in. Sign out so the next user cannot reopen your email."
   }

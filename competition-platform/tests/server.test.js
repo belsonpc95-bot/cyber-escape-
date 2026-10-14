@@ -141,7 +141,8 @@ test("server challenge pools cover the requested mission distribution and unique
   assert.deepEqual(Object.values(LEVEL_ATTEMPT_LIMITS), [2, 2, 3]);
   assert.equal(CHALLENGE_POOLS[1].length, 10);
   assert.ok(CHALLENGE_POOLS[1].every((challenge) =>
-    Array.isArray(challenge.answer_options) && challenge.answer_options.length === 2 &&
+    Array.isArray(challenge.answer_options) && challenge.answer_options.length === 4 &&
+    new Set(challenge.answer_options).size === 4 &&
     challenge.hint && challenge.explanation && challenge.points === 10
   ));
   assert.equal(new Set(CHALLENGE_POOLS[1].map((challenge) => challenge.prompt)).size, 10);
@@ -345,7 +346,7 @@ test("server stores and evaluates a complete participant session, with private a
         questionState = (await request("/api/participant/current", { cookie: participantCookieValue })).data.question;
         assert.equal(questionState.id, challengeId);
         assert.equal(questionState.attempt_limit, 2);
-        assert.deepEqual(questionState.options.map((option) => option.value).sort(), ["A", "B"]);
+        assert.deepEqual(questionState.options.map((option) => option.value).sort(), ["A", "B", "C", "D"]);
         const correctChoice = questionState.options.find((option) => option.text === challenge.answer_options[0]);
         assert.ok(correctChoice);
         correctOption = correctChoice.value;
@@ -389,7 +390,7 @@ test("server stores and evaluates a complete participant session, with private a
       }
     }
     if (level === 2 && startIndex === 0 && successCount === 10) {
-      assert.deepEqual([...correctOptionLabels].sort(), ["A", "B"]);
+      assert.ok(correctOptionLabels.size > 1, "correct choices should not always occupy the same position");
     }
     return result;
   };
@@ -796,7 +797,7 @@ test("incorrect answers stay private until each level is complete and limited at
   const failedInvestigation = getChallenge(levelTwo[0]);
   assert.equal(current.data.question.id, failedInvestigation.id);
   assert.equal(current.data.question.attempt_limit, 2);
-  assert.equal(current.data.question.options.length, 2);
+  assert.equal(current.data.question.options.length, 4);
   const failedCorrectOption = current.data.question.options.find((option) =>
     option.text === failedInvestigation.answer_options[0]
   );
