@@ -111,7 +111,7 @@ export function initializeGame() {
         const level = LEVELS[levelIndex];
         return `<div class="game-head">
           <div class="game-meta">
-            <span class="level-label">OPERATOR: ${escapeHtml(run.player.toUpperCase())} &nbsp;·&nbsp; LEVEL 0${levelIndex + 1} / 05 &nbsp;·&nbsp; ${level.theme}</span>
+            <span class="level-label">OPERATOR: ${escapeHtml(run.player.toUpperCase())} &nbsp;·&nbsp; LEVEL 0${levelIndex + 1} / 05 &nbsp;·&nbsp; ${level.title}<span class="level-environment">${level.environment}</span></span>
             <span class="score-hud">CURRENT SCORE <strong class="score-value">${score}</strong><span>/ 100</span></span>
           </div>
           <div class="progress-track" aria-label="Level progression"><div class="progress-fill" style="width:${getMissionProgress(levelIndex)}%"></div></div>
@@ -154,7 +154,7 @@ export function initializeGame() {
             <section class="panel briefing-panel">
               <div class="briefing-heading"><div><div class="eyebrow">Mission briefing</div><h3 style="margin:7px 0 0">Five gates. One finalist.</h3></div><span class="mono muted" style="font-size:10px">05 / 05</span></div>
               <div class="briefing-list">${LEVELS.map((level, i) => `<div class="briefing-item">
-                <span class="briefing-num">0${i + 1}</span><span class="briefing-name">${level.title}<span class="briefing-theme">${level.theme}</span></span>
+                <span class="briefing-num">0${i + 1}</span><span class="briefing-name">${level.title}<span class="briefing-theme">${level.theme}</span><span class="briefing-environment">${level.environment}</span></span>
                 <span class="briefing-score">${level.qualify === null ? `${FINAL_QUESTION_COUNT * FINAL_QUESTION_SECONDS} SEC` : `≥ ${level.qualify}`}</span>
               </div>`).join("")}</div>
             </section>
@@ -247,7 +247,7 @@ export function initializeGame() {
         levelState.attempt = 0;
         app.innerHTML = `${headerMarkup(index, 0)}<div class="stage-grid animate-in">
           <section class="panel challenge-panel">
-            <div class="eyebrow">Gate 01 · Password Fortress</div>
+            <div class="eyebrow">Gate 01 · Armored AI Command Lab</div>
             <h2 style="margin-top:10px">Crack the access phrase.</h2>
             <p class="game-description">A vault accepts a four-digit numeric code. Use each clue to reason out the only code that fits.</p>
             <ul class="clue-list">
@@ -320,7 +320,7 @@ export function initializeGame() {
         </div>`).join("");
         app.innerHTML = `${headerMarkup(index, 0)}<div class="stage-grid animate-in">
           <section class="panel challenge-panel">
-            <div class="eyebrow">Gate 02 · Link Verification Round</div>
+            <div class="eyebrow">Gate 02 · Emerald Energy Research Facility</div>
             <h2 style="margin-top:10px">Trust the destination?</h2>
             <p class="game-description">Classify each message link. Check the registrable domain, subdomains, lookalike characters, and URL structure. All domains below are fictional training examples.</p>
             <div class="link-list">${rows}</div>
@@ -385,7 +385,7 @@ export function initializeGame() {
         const score = levelState.score;
         app.innerHTML = `${headerMarkup(index, score)}<div class="stage-grid animate-in">
           <section class="panel challenge-panel">
-            <div class="eyebrow">Gate 03 · Cipher Chamber</div>
+            <div class="eyebrow">Gate 03 · Futuristic Command Tower</div>
             <h2 style="margin-top:10px">Shift the signal.</h2>
             <p class="game-description">Caesar cipher rule: shift every letter forward by the numerical key, wrapping Z back to A. Keep the original letter order. Decode the message shown below.</p>
             <div class="alphabet">A B C D E F G H I J K L M<br>N O P Q R S T U V W X Y Z</div>
@@ -453,7 +453,7 @@ export function initializeGame() {
         const index = 3;
         app.innerHTML = `${headerMarkup(index, 0)}<div class="stage-grid animate-in">
           <section class="panel challenge-panel">
-            <div class="eyebrow">Gate 04 · Digital Investigation</div>
+            <div class="eyebrow">Gate 04 · Retro-Futuristic Classified Lab</div>
             <h2 style="margin-top:10px">Read between the lines.</h2>
             <p class="game-description">Inspect this ordinary Java marks program. Its output is routine; the numeric data is not. Identify the hidden two-word message in the order the numbers appear.</p>
             <div class="tiny-label">Start with A = 1.</div>
@@ -508,7 +508,7 @@ export function initializeGame() {
         const item = levelState.rounds[q];
         app.innerHTML = `${headerMarkup(4, levelState.score)}<div class="stage-grid animate-in">
           <section class="panel challenge-panel">
-            <div class="round-top"><div><div class="eyebrow">Gate 05 · Cyber Intelligence</div><h2 style="margin:9px 0 0">Find the tool.</h2></div><div class="timer"><span aria-hidden="true">◷</span><span id="round-timer">${secondsLeft}s</span></div></div>
+            <div class="round-top"><div><div class="eyebrow">Gate 05 · Classified Intelligence Bunker</div><h2 style="margin:9px 0 0">Find the tool.</h2></div><div class="timer"><span aria-hidden="true">◷</span><span id="round-timer">${secondsLeft}s</span></div></div>
             <p class="game-description">A cybersecurity tool name is embedded inside this signal. Identify the tool. One answer per signal; the next round begins immediately.</p>
             <div class="timer-bar"><span id="timer-progress" style="width:${roundRemaining / (FINAL_QUESTION_SECONDS * 10)}%"></span></div>
             <div class="round-count">SIGNAL 0${q + 1} / 05 &nbsp;·&nbsp; 20 POINTS</div>
