@@ -213,7 +213,7 @@ const archivedLevelTwoPool = archivedLevelTwoScenarios.map(([assignment_group, t
 
 const levelTwoScenarios = [
   {
-    prompt: "A classmate sends this message. What should you do with its link? Type a short action.",
+    prompt: "A classmate sends this message. Which is the safest way to check your mailbox?",
     artifact: `TEXT MESSAGE
 "Your campus mailbox is full. Sign in here now: campus-mail-fix.test"
 
@@ -221,10 +221,14 @@ KNOWN FACT
 The campus sign-in page is campus.example.edu.`,
     hint: "The link does not match the known campus sign-in. Do not trust a link just because a message sounds familiar.",
     expected_answer: "do not click the link",
-    accepted_answers: ["ignore the link", "do not open the link", "avoid the link", "don't click", "don't click the link"]
+    answer_options: [
+      "Ignore the message link and open campus.example.edu yourself.",
+      "Open the link after checking that the page shows a padlock."
+    ],
+    explanation: "A padlock only means the connection is encrypted. It does not prove the page belongs to your campus."
   },
   {
-    prompt: "Read the email greeting. What is one clear warning sign? Type the clue.",
+    prompt: "Which detail is the stronger warning sign in this email?",
     artifact: `EMAIL
 From: Campus IT
 To: All students
@@ -232,10 +236,14 @@ Subject: Your mailbox is almost full
 Message: "Dear user, open the attached guide to keep your account."`,
     hint: "Look at how the message addresses the reader. A message sent to many people may use a vague greeting.",
     expected_answer: "generic greeting",
-    accepted_answers: ["dear user", "impersonal greeting", "vague greeting"]
+    answer_options: [
+      "It uses the vague greeting \"Dear user\" and asks you to open a file.",
+      "It was sent to all students, which proves the sender is an impostor."
+    ],
+    explanation: "A vague greeting and an unexpected file deserve caution. A message sent to many students is not, by itself, proof of fraud."
   },
   {
-    prompt: "A page claims to be the campus sign-in, but the logo is blurry, the text has spelling mistakes, and it asks for your date of birth for a raffle. What kind of page is this?",
+    prompt: "The page looks like the campus sign-in, but its logo is stretched, it has spelling errors, and it asks for your birth date for a raffle. What is the best response?",
     artifact: `LOGIN PAGE CLUES
 Page title: Campus Portal
 Logo: blurry and stretched
@@ -243,79 +251,115 @@ Text: several spelling mistakes
 Extra request: password and date of birth to enter a raffle`,
     hint: "A familiar name or logo does not prove a page is genuine. Check whether the page and its requests make sense.",
     expected_answer: "fake login page",
-    accepted_answers: ["fake sign-in page", "phishing page", "fake page"]
+    answer_options: [
+      "Close it and reach the campus portal through its known official address.",
+      "Continue because the page title says Campus Portal."
+    ],
+    explanation: "A page title can be copied. Spelling problems and an unrelated request are warning signs; use the official address you already know."
   },
   {
-    prompt: "You were not expecting a file with this email. Type the attachment name you should treat with caution.",
+    prompt: "An unexpected timetable arrives as a macro-enabled spreadsheet. What should you do first?",
     artifact: `EMAIL SUBJECT: Exam timetable
 ATTACHMENT: FINAL_TIMETABLE.xlsm
 NOTE: You did not ask anyone to send you a file.`,
     hint: "Pause before opening files you were not expecting. Confirm with the sender using a contact method you already trust.",
-    expected_answer: "final_timetable.xlsm"
+    expected_answer: "final_timetable.xlsm",
+    answer_options: [
+      "Confirm with the sender using a contact method you already trust.",
+      "Open it in a spreadsheet app, but do not enable macros unless asked."
+    ],
+    explanation: "An unexpected macro-enabled file should be verified before opening. Opening it first can still expose you to risk."
   },
   {
-    prompt: "The college help desk says its address is helpdesk@campus.edu. Type the sender address that does not match.",
+    prompt: "The known help desk address is helpdesk@campus.edu. The display name says \"Campus Help Desk.\" How should you treat this email?",
     artifact: `EMAIL
 From: helpdesk@campus-support.example
 Subject: Verify your campus account`,
     hint: "Compare the sender's full address with the known college address, not just the display name.",
-    expected_answer: "helpdesk@campus-support.example"
+    expected_answer: "helpdesk@campus-support.example",
+    answer_options: [
+      "Treat it as unverified because the sender's domain differs from campus.edu.",
+      "Trust it because the display name matches the college help desk."
+    ],
+    explanation: "Display names can be chosen by the sender. Check the full email address and verify through a known college contact."
   },
   {
-    prompt: "This message says your account will be deleted in five minutes. Type the pressure tactic it is using.",
+    prompt: "A text says your account will be deleted in five minutes unless you act now. What is the safest next step?",
     artifact: `TEXT MESSAGE
 "FINAL WARNING: Your account will be deleted in 5 minutes.
 Act now or lose access!"`,
     hint: "Notice how the message tries to rush you into acting without time to check it.",
     expected_answer: "false urgency",
-    accepted_answers: ["urgency", "time pressure", "pressure"]
+    answer_options: [
+      "Pause and check with IT through its official contact details.",
+      "Reply quickly and ask the sender to confirm the deadline."
+    ],
+    explanation: "The short deadline is designed to rush you. Verify the claim through a trusted channel rather than replying to the message."
   },
   {
-    prompt: "A message asks you to reply with your password or six-digit sign-in code. Type one thing you must never share.",
+    prompt: "Someone claiming to be IT asks for your password or six-digit sign-in code. What should you do?",
     artifact: `CHAT MESSAGE
 "I am from IT support. Send me your password or the six-digit code we just texted you."`,
     hint: "Support staff should not ask you to send secret sign-in details in a message.",
     expected_answer: "otp",
-    accepted_answers: ["password", "one-time code", "one-time password", "sign-in code"]
+    answer_options: [
+      "Do not share either secret; contact IT using its official channel.",
+      "Share the one-time code, but keep your password private."
+    ],
+    explanation: "Never send a password or one-time code to someone in a message. A code can let them sign in as you."
   },
   {
-    prompt: "The official college website is campus.edu. Type the domain in this message that does not match it.",
+    prompt: "The official college website is campus.edu. A message links to campus-login-help.test. How should you reach the portal?",
     artifact: `MESSAGE LINK
 campus-login-help.test
 
 OFFICIAL COLLEGE WEBSITE
 campus.edu`,
     hint: "Compare the two website names. The official college name should be the ending domain, not just a similar word.",
-    expected_answer: "campus-login-help.test"
+    expected_answer: "campus-login-help.test",
+    answer_options: [
+      "Type campus.edu yourself or use a saved official bookmark.",
+      "Use the link because it contains the word \"campus\"."
+    ],
+    explanation: "A familiar word inside a different domain does not make it official. Use the known campus address instead."
   },
   {
-    prompt: "You receive an account alert about a login from a device you do not recognize. What account activity should you check? Type your answer.",
+    prompt: "An alert reports a login from a device you do not recognize. What is the safest way to investigate?",
     artifact: `ACCOUNT ALERT
 New sign-in detected from an unknown device.
 You were not trying to sign in.`,
     hint: "Use the official account app or website directly. Look for the list of recent sign-ins.",
     expected_answer: "recent sign-ins",
-    accepted_answers: ["sign-in activity", "login activity", "account activity", "sign-in history", "login history"]
+    answer_options: [
+      "Open the official app or site directly and review recent sign-ins.",
+      "Click the alert's link and enter your password to confirm the login."
+    ],
+    explanation: "Check account activity through the official app or site. Links inside unexpected alerts may lead to fake sign-in pages."
   },
   {
-    prompt: "You are leaving a shared college computer and your email is still open. Type the security action to take.",
+    prompt: "You are leaving a shared college computer with your email still open. What should you do?",
     artifact: `SHARED COMPUTER
 Your email account is signed in.
 The next student is waiting to use this computer.`,
     hint: "Make sure the next person cannot open your account from this computer.",
     expected_answer: "sign out",
-    accepted_answers: ["log out", "sign out of the account", "log off"]
+    answer_options: [
+      "Sign out of your account before leaving the computer.",
+      "Close the browser tab; the shared computer will end your session."
+    ],
+    explanation: "Closing a tab may leave your account signed in. Sign out so the next user cannot reopen your email."
   }
 ];
 
-const levelTwoPool = levelTwoScenarios.map(({ prompt, artifact, hint, expected_answer, accepted_answers }, index) => ({
+const levelTwoPool = levelTwoScenarios.map(({ prompt, artifact, hint, expected_answer, answer_options, explanation }, index) => ({
   id: `GAM-E${String(index + 1).padStart(2, "0")}`,
   level: 2,
   terminal: "GAMMA BREACH EVIDENCE",
   prompt,
   artifact,
   hint,
-  accepted_answers,
+  answer_options,
+  explanation,
   input_label: "TYPE YOUR FINDING",
   placeholder: "Enter a short answer",
   expected_answer,

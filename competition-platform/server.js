@@ -169,6 +169,22 @@ function normalizeAnswer(answer) {
   return String(answer ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
+function levelTwoOptions(participantId, question) {
+  if (!Array.isArray(question.answer_options) || question.answer_options.length !== 2) {
+    throw new Error(`Level 2 challenge ${question.id} must have exactly two answer options.`);
+  }
+  const correctFirst = createHash("sha256")
+    .update(`${participantId}:${question.id}`)
+    .digest()[0] % 2 === 0;
+  const texts = correctFirst
+    ? question.answer_options
+    : [question.answer_options[1], question.answer_options[0]];
+  return {
+    options: texts.map((text, index) => ({ value: index === 0 ? "A" : "B", text })),
+    correctOption: correctFirst ? "A" : "B"
+  };
+}
+
 function backfillChallengeAssignments(db) {
   const participants = db.prepare("SELECT * FROM participants ORDER BY created_at, id").all();
   const usedAssignments = Array.from({ length: 5 }, (_, index) => participants.flatMap((row) => {
@@ -440,13 +456,22 @@ export function createCompetitionServer({
       FROM answers WHERE participant_id = ? AND level = ? AND is_correct = 0
       ORDER BY question_ordinal
     `).all(participant.id, level);
-    const answer_review = answers.map((answer) => ({
-      challenge_id: answer.question_id,
-      ordinal: answer.question_ordinal,
-      participant_answer: answer.submitted_answer,
-      correct_answer: answer.correct_answer,
-      terminal: getChallenge(answer.question_id)?.terminal || "COMPLETED CHALLENGE"
-    }));
+    const answer_review = answers.map((answer) => {
+      const challenge = getChallenge(answer.question_id);
+      const selectedOption = level === 2 && answer.submitted_answer
+        ? levelTwoOptions(participant.id, challenge).options.find((option) => option.value === answer.submitted_answer)
+        : null;
+      return {
+        challenge_id: answer.question_id,
+        ordinal: answer.question_ordinal,
+        participant_answer: level === 2
+          ? selectedOption ? `${selectedOption.value}: ${selectedOption.text}` : answer.submitted_answer
+          : answer.submitted_answer,
+        correct_answer: level === 2 ? challenge?.answer_options?.[0] || answer.correct_answer : answer.correct_answer,
+        terminal: challenge?.terminal || "COMPLETED CHALLENGE",
+        ...(level === 2 ? { explanation: challenge?.explanation || "" } : {})
+      };
+    });
     const completion = {
       level,
       level_name: LEVEL_NAMES[level - 1],
@@ -520,7 +545,8 @@ export function createCompetitionServer({
       ...(question.level === 1 ? { context: question.context, clues: question.clues } : {}),
       input_label: question.input_label,
       placeholder: question.placeholder,
-      level_name: LEVEL_NAMES[question.level - 1]
+      level_name: LEVEL_NAMES[question.level - 1],
+      ...(question.level === 2 ? { options: levelTwoOptions(participant.id, question).options } : {})
     };
     if (question.level === 1) {
       const remaining = Math.max(0, LEVEL_ONE_QUESTION_MS - (Date.now() - participant.question_started_at));
@@ -712,11 +738,15 @@ export function createCompetitionServer({
       if (question.level === 1 && !timedOut && !/^\d{4}$/.test(payload.answer.trim())) {
         throw new HttpError(400, "Enter a four-digit password.");
       }
+      if (question.level === 2 && !["A", "B"].includes(String(payload.answer || "").trim().toUpperCase())) {
+        throw new HttpError(400, "Choose Option A or Option B.");
+      }
       const submitted = timedOut ? null : String(payload.answer).trim().slice(0, 200);
+      const levelTwoAnswer = question.level === 2 ? levelTwoOptions(participant.id, question) : null;
       const acceptedAnswers = [question.expected_answer, ...(question.accepted_answers || [])];
-      const correct = !timedOut && acceptedAnswers.some((answer) =>
-        normalizeAnswer(submitted) === normalizeAnswer(answer)
-      );
+      const correct = !timedOut && (question.level === 2
+        ? submitted.toUpperCase() === levelTwoAnswer.correctOption
+        : acceptedAnswers.some((answer) => normalizeAnswer(submitted) === normalizeAnswer(answer)));
       const attemptNumber = participant.question_attempt_count + 1;
       const attemptLimit = LEVEL_ATTEMPT_LIMITS[question.level] ?? (question.level === 5 ? 1 : null);
       if (attemptLimit && !correct && !timedOut && attemptNumber < attemptLimit) {

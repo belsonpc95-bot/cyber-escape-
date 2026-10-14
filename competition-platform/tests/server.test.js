@@ -94,7 +94,10 @@ function assertNoParticipantEvaluation(value) {
     if (completion && ["answer_review", "scores", "total_score", "overall_percentage", "final_qualified"].includes(key)) {
       if (key === "answer_review") {
         for (const review of child) {
-          assert.deepEqual(Object.keys(review).sort(), ["challenge_id", "correct_answer", "ordinal", "participant_answer", "terminal"].sort());
+          const keys = Object.keys(review).sort();
+          const standardKeys = ["challenge_id", "correct_answer", "ordinal", "participant_answer", "terminal"].sort();
+          const levelTwoKeys = [...standardKeys, "explanation"].sort();
+          assert.ok(JSON.stringify(keys) === JSON.stringify(standardKeys) || JSON.stringify(keys) === JSON.stringify(levelTwoKeys));
         }
       }
       continue;
@@ -136,6 +139,12 @@ test("server challenge pools cover the requested mission distribution and unique
   ));
   assert.ok(CHALLENGE_POOLS[0].every((challenge) => challenge.points === 20));
   assert.deepEqual(Object.values(LEVEL_ATTEMPT_LIMITS), [2, 2, 3]);
+  assert.equal(CHALLENGE_POOLS[1].length, 10);
+  assert.ok(CHALLENGE_POOLS[1].every((challenge) =>
+    Array.isArray(challenge.answer_options) && challenge.answer_options.length === 2 &&
+    challenge.hint && challenge.explanation && challenge.points === 10
+  ));
+  assert.equal(new Set(CHALLENGE_POOLS[1].map((challenge) => challenge.prompt)).size, 10);
   const levelTwoAssignment = assignChallenges(2);
   const levelTwoChallenges = levelTwoAssignment.map(getChallenge);
   assert.equal(new Set(levelTwoChallenges.map((challenge) => challenge.prompt)).size, 10);
@@ -146,7 +155,7 @@ test("server challenge pools cover the requested mission distribution and unique
   assert.ok(levelTwoChallenges.some((challenge) => challenge.expected_answer === "fake login page"));
   assert.ok(levelTwoChallenges.some((challenge) => challenge.expected_answer === "final_timetable.xlsm"));
   assert.ok(levelTwoChallenges.some((challenge) => challenge.expected_answer === "helpdesk@campus-support.example"));
-  assert.ok(levelTwoChallenges.some((challenge) => challenge.accepted_answers?.includes("password")));
+  assert.ok(levelTwoChallenges.some((challenge) => challenge.prompt.includes("password or six-digit sign-in code")));
   const levelThreeAssignment = assignChallenges(3);
   const levelThreeTypes = levelThreeAssignment.map((id) => getChallenge(id).logic_type);
   assert.deepEqual(
@@ -324,16 +333,34 @@ test("server stores and evaluates a complete participant session, with private a
   };
   const submitAssignedLevel = async (participantCookieValue, id, level, successCount, startIndex = 0) => {
     const assigned = assignedChallengeIds(id, level);
+    const correctOptionLabels = new Set();
     let result;
     for (const [index, challengeId] of assigned.slice(startIndex).entries()) {
       const challenge = getChallenge(challengeId);
       const shouldBeCorrect = index + startIndex < successCount;
       const preliminaryWrongAttempts = level === 4 ? 2 : [1, 2].includes(level) ? 1 : 0;
+      let questionState;
+      let correctOption;
+      if (level === 2) {
+        questionState = (await request("/api/participant/current", { cookie: participantCookieValue })).data.question;
+        assert.equal(questionState.id, challengeId);
+        assert.equal(questionState.attempt_limit, 2);
+        assert.deepEqual(questionState.options.map((option) => option.value).sort(), ["A", "B"]);
+        const correctChoice = questionState.options.find((option) => option.text === challenge.answer_options[0]);
+        assert.ok(correctChoice);
+        correctOption = correctChoice.value;
+        correctOptionLabels.add(correctOption);
+      }
       for (let attempt = 0; attempt < preliminaryWrongAttempts; attempt += 1) {
         const wrong = await request("/api/participant/answer", {
           method: "POST",
           cookie: participantCookieValue,
-          body: { question_id: challengeId, answer: level === 1 ? "0000" : "INVALID-RESPONSE" }
+          body: {
+            question_id: challengeId,
+            answer: level === 1 ? "0000" : level === 2
+              ? questionState.options.find((option) => option.value !== correctOption).value
+              : "INVALID-RESPONSE"
+          }
         });
         assertNoParticipantEvaluation(wrong.data);
         assert.equal(wrong.response.status, 200);
@@ -341,9 +368,13 @@ test("server stores and evaluates a complete participant session, with private a
         assert.equal(wrong.data.attempts_remaining, preliminaryWrongAttempts - attempt);
         assert.equal("correct_answer" in wrong.data, false);
       }
-      const submitted = shouldBeCorrect
-        ? challenge.expected_answer
-        : level === 1 ? "0000" : "INVALID-RESPONSE";
+      const submitted = level === 2
+        ? shouldBeCorrect
+          ? correctOption
+          : questionState.options.find((option) => option.value !== correctOption).value
+        : shouldBeCorrect
+          ? challenge.expected_answer
+          : level === 1 ? "0000" : "INVALID-RESPONSE";
       result = await request("/api/participant/answer", {
         method: "POST",
         cookie: participantCookieValue,
@@ -356,6 +387,9 @@ test("server stores and evaluates a complete participant session, with private a
         assert.equal(next.data.question.id, assigned[index + startIndex + 1]);
         assert.equal(next.data.question.seconds_remaining, 120);
       }
+    }
+    if (level === 2 && startIndex === 0 && successCount === 10) {
+      assert.deepEqual([...correctOptionLabels].sort(), ["A", "B"]);
     }
     return result;
   };
@@ -762,7 +796,22 @@ test("incorrect answers stay private until each level is complete and limited at
   const failedInvestigation = getChallenge(levelTwo[0]);
   assert.equal(current.data.question.id, failedInvestigation.id);
   assert.equal(current.data.question.attempt_limit, 2);
-  for (const answer of ["wrong-one", "wrong-two"]) {
+  assert.equal(current.data.question.options.length, 2);
+  const failedCorrectOption = current.data.question.options.find((option) =>
+    option.text === failedInvestigation.answer_options[0]
+  );
+  assert.ok(failedCorrectOption);
+  const failedWrongOption = current.data.question.options.find((option) =>
+    option.value !== failedCorrectOption.value
+  );
+  const typedAnswer = await request("/api/participant/answer", {
+    method: "POST",
+    cookie,
+    body: { question_id: failedInvestigation.id, answer: failedInvestigation.expected_answer }
+  });
+  assert.equal(typedAnswer.response.status, 400);
+  assert.equal((await request("/api/participant/current", { cookie })).data.question.attempts_remaining, 2);
+  for (const [attemptIndex, answer] of [failedWrongOption.value, failedWrongOption.value].entries()) {
     result = await request("/api/participant/answer", {
       method: "POST",
       cookie,
@@ -771,47 +820,61 @@ test("incorrect answers stay private until each level is complete and limited at
     assert.equal(result.response.status, 200);
     assert.equal("correct_answer" in result.data, false);
     assert.equal("answer_review" in result.data, false);
-    if (answer === "wrong-one") {
+    if (attemptIndex === 0) {
       assert.equal(result.data.retry, true);
       assert.equal(result.data.attempts_remaining, 1);
       current = await request("/api/participant/current", { cookie });
       assert.equal(current.data.question.id, failedInvestigation.id);
       assert.equal(current.data.question.attempts_remaining, 1);
+      assert.deepEqual(current.data.question.options, (await request("/api/participant/current", { cookie })).data.question.options);
     } else {
       assert.equal(result.data.question.ordinal, 2);
       assert.equal(result.data.question.attempts_remaining, 2);
     }
   }
   const aliasIndex = levelTwo.findIndex((challengeId, index) =>
-    index > 0 && getChallenge(challengeId).accepted_answers?.length
+    index > 0 && getChallenge(challengeId).answer_options
   );
   const aliasInvestigation = getChallenge(levelTwo[aliasIndex]);
-  assert.ok(aliasInvestigation.accepted_answers?.length);
+  const aliasState = (await request("/api/participant/current", { cookie })).data.question;
+  const aliasCorrectOption = aliasState.options.find((option) =>
+    option.text === aliasInvestigation.answer_options[0]
+  );
+  assert.ok(aliasCorrectOption);
   result = await request("/api/participant/answer", {
     method: "POST",
     cookie,
-    body: { question_id: aliasInvestigation.id, answer: aliasInvestigation.accepted_answers[0] }
+    body: { question_id: aliasInvestigation.id, answer: aliasCorrectOption.value }
   });
   assert.equal(result.response.status, 200);
   assert.equal(result.data.question.ordinal, aliasIndex + 2);
   for (const challengeId of levelTwo.slice(aliasIndex + 1)) {
     const challenge = getChallenge(challengeId);
+    const questionState = (await request("/api/participant/current", { cookie })).data.question;
+    const correctOption = questionState.options.find((option) =>
+      option.text === challenge.answer_options[0]
+    );
+    assert.ok(correctOption);
     result = await request("/api/participant/answer", {
       method: "POST",
       cookie,
-      body: { question_id: challengeId, answer: challenge.expected_answer }
+      body: { question_id: challengeId, answer: correctOption.value }
     });
   }
   assert.equal(result.data.completion.score, 90);
   assert.equal(result.data.completion.answer_review.length, 1);
-  assert.equal(result.data.completion.answer_review[0].participant_answer, "wrong-two");
-  assert.equal(result.data.completion.answer_review[0].correct_answer, failedInvestigation.expected_answer);
+  assert.equal(
+    result.data.completion.answer_review[0].participant_answer,
+    `${failedWrongOption.value}: ${failedWrongOption.text}`
+  );
+  assert.equal(result.data.completion.answer_review[0].correct_answer, failedInvestigation.answer_options[0]);
+  assert.equal(result.data.completion.answer_review[0].explanation, failedInvestigation.explanation);
   const savedLevelTwoAttempts = server.database.prepare(
     "SELECT attempt_number, submitted_answer, is_correct FROM answer_attempts WHERE participant_id = ? AND question_id = ? ORDER BY attempt_number"
   ).all(participantId, failedInvestigation.id);
   assert.deepEqual(savedLevelTwoAttempts.map((attempt) => ({ ...attempt })), [
-    { attempt_number: 1, submitted_answer: "wrong-one", is_correct: 0 },
-    { attempt_number: 2, submitted_answer: "wrong-two", is_correct: 0 }
+    { attempt_number: 1, submitted_answer: failedWrongOption.value, is_correct: 0 },
+    { attempt_number: 2, submitted_answer: failedWrongOption.value, is_correct: 0 }
   ]);
   const completedSession = await request("/api/participant/current", { cookie });
   assert.deepEqual(completedSession.data.completion.answer_review, result.data.completion.answer_review);

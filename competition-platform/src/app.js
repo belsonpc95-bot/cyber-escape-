@@ -136,15 +136,26 @@ function publicQuestionMarkup(question) {
   const attempts = Number.isInteger(question.attempt_limit)
     ? `<div class="attempt-counter">ATTEMPTS REMAINING <strong id="attempt-count">${question.attempts_remaining}</strong> / ${question.attempt_limit}</div>`
     : "";
+  const answerControl = question.level === 2
+    ? `<fieldset class="level-two-options">
+        <legend>SELECT ONE RESPONSE</legend>
+        ${question.options.map((option) => `<label class="level-two-option">
+          <input type="radio" name="answer" value="${escapeHtml(option.value)}" required>
+          <span class="option-key">OPTION ${escapeHtml(option.value)}</span>
+          <span class="option-text">${escapeHtml(option.text)}</span>
+        </label>`).join("")}
+      </fieldset>
+      <button class="button level-two-submit" type="submit">SUBMIT RESPONSE</button>`
+    : `<label for="mission-answer">${escapeHtml(question.input_label || "TERMINAL INPUT")}</label>
+      <div class="terminal-command"><span aria-hidden="true">&gt;</span><input id="mission-answer" name="answer" class="text-input" maxlength="${question.level === 1 ? 4 : 200}" ${question.level === 1 ? 'inputmode="numeric" pattern="[0-9]{4}"' : ""} autocomplete="off" placeholder="${escapeHtml(question.placeholder || "Enter your finding")}" required><button class="button" type="submit">${question.level === 1 ? "UNLOCK" : "EXECUTE"}</button></div>`;
   return `<p class="mission-objective">${escapeHtml(question.prompt)}</p>
     ${artifact}
     ${timer}
     ${attempts}
     <form class="answer-form terminal-input" data-form="answer">
-      <label for="mission-answer">${escapeHtml(question.input_label || "TERMINAL INPUT")}</label>
-      <div class="terminal-command"><span aria-hidden="true">&gt;</span><input id="mission-answer" name="answer" class="text-input" maxlength="${question.level === 1 ? 4 : 200}" ${question.level === 1 ? 'inputmode="numeric" pattern="[0-9]{4}"' : ""} autocomplete="off" placeholder="${escapeHtml(question.placeholder || "Enter your finding")}" required><button class="button" type="submit">${question.level === 1 ? "UNLOCK" : "EXECUTE"}</button></div>
+      ${answerControl}
     </form>
-    <div class="notice" id="game-notice" role="status">${question.level === 1 ? "Analyze the recovered notes. The password is not printed in any one clue." : "Your command will be evaluated by the secure system."}</div>`;
+    <div class="notice" id="game-notice" role="status">${question.level === 1 ? "Analyze the recovered notes. The password is not printed in any one clue." : question.level === 2 ? "Compare both responses with the evidence, then select one." : "Your command will be evaluated by the secure system."}</div>`;
 }
 
 function renderQuestion(question, level, questionIndex, totalQuestions) {
@@ -156,7 +167,7 @@ function renderQuestion(question, level, questionIndex, totalQuestions) {
   const levelInfo = LEVELS[level - 1];
   const intros = {
     1: "Advanced security laboratory · investigate the operator records, connect the clues, and breach each password gate.",
-    2: "Unstable experimental facility · inspect simple messages, emails, and account alerts. Type what you notice.",
+    2: "Unstable experimental facility · inspect messages, emails, and account alerts. Choose the response best supported by the evidence.",
     3: "Cyber operations command · recover encrypted payloads using the clues in each transmission.",
     4: "Classified investigation room · trace the source logic and reconstruct the hidden incident token.",
     5: "Final high-pressure directive · 5 signals, 30 seconds each, 150 seconds maximum. No time carries over."
@@ -197,7 +208,7 @@ function renderLevelCompletion(completion) {
       ? `<p class="completion-recorded">Your results have been securely recorded.</p><button type="button" class="button secondary" data-action="return">Return to portal</button>`
       : `<p class="completion-recorded">Your game session has ended. The next level remains locked.</p>`;
   const review = completion.answer_review?.length
-    ? `<section class="answer-review"><div class="eyebrow">WRONG-ANSWER REVIEW</div>${completion.answer_review.map((answer) => `<article class="review-entry"><h3>CHALLENGE ${String(answer.ordinal).padStart(2, "0")} · ${escapeHtml(answer.terminal)}</h3><dl><div><dt>Your answer</dt><dd>${escapeHtml(answer.participant_answer || "No response")}</dd></div><div><dt>Correct answer</dt><dd>${escapeHtml(answer.correct_answer)}</dd></div></dl></article>`).join("")}</section>`
+    ? `<section class="answer-review"><div class="eyebrow">WRONG-ANSWER REVIEW</div>${completion.answer_review.map((answer) => `<article class="review-entry"><h3>CHALLENGE ${String(answer.ordinal).padStart(2, "0")} · ${escapeHtml(answer.terminal)}</h3><dl><div><dt>Your answer</dt><dd>${escapeHtml(answer.participant_answer || "No response")}</dd></div><div><dt>Correct answer</dt><dd>${escapeHtml(answer.correct_answer)}</dd></div>${answer.explanation ? `<div><dt>Explanation</dt><dd>${escapeHtml(answer.explanation)}</dd></div>` : ""}</dl></article>`).join("")}</section>`
     : `<section class="answer-review"><div class="eyebrow">WRONG-ANSWER REVIEW</div><p class="muted">All challenge responses were correct. No corrections required.</p></section>`;
   const scoreBreakdown = finalLevel
     ? `<section class="final-score-breakdown"><div class="eyebrow">FINAL SCORE ARCHIVE</div>${completion.scores.map((score) => `<div class="final-score-row"><span>LEVEL ${score.level} SCORE · ${escapeHtml(score.level_name)}</span><strong>${Number(score.score)}/100</strong></div>`).join("")}<div class="final-score-row overall-score"><span>OVERALL SCORE</span><strong>${Number(completion.total_score)}/500</strong></div><div class="final-score-row overall-percentage"><span>OVERALL PERCENTAGE</span><strong>${Number(completion.overall_percentage)}%</strong></div><div class="qualification-status">${qualified ? "QUALIFIED" : "NOT QUALIFIED"}</div></section>`
@@ -270,8 +281,12 @@ async function submitAnswer(answer) {
       if (notice) notice.textContent = `ACCESS DENIED · ${result.hint} · ${result.attempts_remaining} attempt remaining.`;
       const field = app.querySelector('input[name="answer"]');
       if (field) {
-        field.value = "";
-        field.focus();
+        if (field.type === "radio") {
+          app.querySelectorAll('input[name="answer"]').forEach((option) => { option.checked = false; });
+        } else {
+          field.value = "";
+          field.focus();
+        }
       }
       buttons.forEach((button) => { button.disabled = false; });
       if (Number.isInteger(result.seconds_remaining)) {
@@ -297,6 +312,11 @@ async function submitAnswer(answer) {
 }
 
 function submitTextAnswer() {
+  if (game?.level === 2) {
+    const selected = app.querySelector('input[name="answer"]:checked');
+    if (selected) submitAnswer(selected.value);
+    return;
+  }
   const field = app.querySelector('input[name="answer"]');
   if (field?.value.trim()) submitAnswer(field.value.trim());
 }

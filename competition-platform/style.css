@@ -109,6 +109,14 @@ input:focus { border-color: rgba(116,244,237,.72); outline: none; box-shadow: 0 
 .terminal-command>span { color: var(--cyan); font: 700 17px "DM Mono",monospace; text-shadow: 0 0 12px rgba(116,244,237,.6); }
 .terminal-command .text-input { border-color: rgba(116,244,237,.22); background: rgba(2,6,11,.7); }
 .terminal-command .button { min-width: 105px; }
+.level-two-options { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.level-two-options legend { margin-bottom: 10px; color: #8ca5b2; font: 10px "DM Mono",monospace; letter-spacing: .1em; }
+.level-two-option { display: grid; grid-template-columns: 18px auto 1fr; gap: 11px; align-items: center; margin: 0; padding: 13px; border: 1px solid rgba(116,244,237,.16); color: #d2e0e8; background: rgba(2,6,11,.48); cursor: pointer; font: 11px/1.65 "DM Mono",monospace; letter-spacing: 0; text-transform: none; transition: border-color .18s,background .18s; }
+.level-two-option:has(input:checked) { border-color: rgba(116,244,237,.72); background: rgba(116,244,237,.08); }
+.level-two-option input { width: 16px; min-height: 16px; margin: 0; padding: 0; accent-color: var(--cyan); cursor: pointer; }
+.option-key { color: var(--cyan); font: 700 9px "DM Mono",monospace; letter-spacing: .08em; white-space: nowrap; }
+.option-text { min-width: 0; }
+.level-two-submit { width: 100%; margin-top: 12px; }
 .challenge-panel { transition: box-shadow .16s, border-color .16s, filter .16s; }
 .challenge-panel[data-reaction="breach"] { border-color: rgba(116,244,237,.9); box-shadow: 0 0 54px rgba(116,244,237,.3),inset 0 0 48px rgba(116,244,237,.15); animation: breach-flash .48s ease-out; }
 .challenge-panel[data-reaction="deflect"] { border-color: rgba(255,100,126,.75); box-shadow: 0 0 44px rgba(255,100,126,.22),inset 0 0 36px rgba(255,100,126,.1); animation: deflect-flash .48s ease-out; }
